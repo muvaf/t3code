@@ -167,7 +167,21 @@ export function createLimrunDeviceStreamClient(
       if (message.type === "rtcConfiguration" && !peer) {
         const pc = new RTCPeerConnection(message.rtcConfiguration);
         peer = pc;
-        pc.addTransceiver("video", { direction: "recvonly" });
+        const videoTransceiver = pc.addTransceiver("video", { direction: "recvonly" });
+        const codecs = globalThis.RTCRtpReceiver?.getCapabilities?.("video")?.codecs;
+        if (codecs && videoTransceiver.setCodecPreferences) {
+          // Match Limrun UI's encoder preferences instead of the browser's default order.
+          const priority = (codec: RTCRtpCodec) => {
+            const mimeType = codec.mimeType.toLowerCase();
+            if (mimeType.includes("vp9")) return 1;
+            if (mimeType.includes("h265") || mimeType.includes("hevc")) return 2;
+            if (mimeType.includes("h264") || mimeType.includes("avc")) return 3;
+            return 4;
+          };
+          videoTransceiver.setCodecPreferences(
+            [...codecs].sort((a, b) => priority(a) - priority(b)),
+          );
+        }
         pc.addTransceiver("audio", { direction: "recvonly" });
         const control = pc.createDataChannel("control", { negotiated: true, ordered: true, id: 1 });
         channel = control;
