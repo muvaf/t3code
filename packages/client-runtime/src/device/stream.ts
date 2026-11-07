@@ -1,5 +1,6 @@
 // @effect-diagnostics globalFetch:off globalTimers:off - This browser and WebView transport runs without an Effect runtime.
 
+import { createLimrunDeviceStreamClient } from "./limrunStream.ts";
 import {
   createDuoControl,
   type DuoCommand,
@@ -121,6 +122,7 @@ export interface DeviceStreamTarget {
   readonly videoOnly?: boolean;
   /** The host speaks only serve-sim's AVCC stream and input socket, on both platforms (Simlock). */
   readonly serveSimOnly?: boolean;
+  readonly limrun?: boolean;
 }
 
 export type DeviceHardwareButton = "home" | "back" | "recents" | "power" | "appSwitcher";
@@ -404,6 +406,7 @@ export function createDeviceStreamClient(
   output: HTMLCanvasElement | DeviceFrameSink,
   events: DeviceStreamEvents,
 ): DeviceStreamClient {
+  if (target.limrun) return createLimrunDeviceStreamClient(target, output, events);
   const { access, platform, deviceId } = target;
   const sink = "present" in output ? output : createCanvasFrameSink(output);
   // Android normally streams over serve-emu's socket; a serve-sim-only host serves it like iOS.

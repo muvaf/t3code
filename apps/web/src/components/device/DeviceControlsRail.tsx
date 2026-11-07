@@ -52,7 +52,8 @@ export function DeviceControlsRail(props: {
   const popupSide = "left";
   const settings = controls.detail?.settings;
   const inputDisabled = !handle?.inputConnected;
-  const runsHostCommands = props.hostKind === "local" || props.hostKind === "ssh";
+  const runsHostCommands =
+    props.hostKind === "local" || props.hostKind === "ssh" || props.hostKind === "limrun";
   const nextAppearance = settings?.appearance === "dark" ? "light" : "dark";
   return (
     <aside
@@ -87,7 +88,16 @@ export function DeviceControlsRail(props: {
             >
               <Square />
             </RailButton>
-            {runsHostCommands ? (
+            {props.hostKind === "limrun" ? (
+              <RailButton
+                tooltipSide={popupSide}
+                label="Rotate device"
+                disabled={inputDisabled}
+                onClick={() => handle?.rotate()}
+              >
+                <RotateCcw />
+              </RailButton>
+            ) : runsHostCommands ? (
               <Menu>
                 <MenuTrigger
                   render={

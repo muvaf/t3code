@@ -178,6 +178,7 @@ it.effect("reads a collected reference again once it is invalidated", () =>
         usageLimitSources,
         easDeviceHosts,
         simlockDeviceHosts,
+        limrunDeviceHosts: [],
       }),
     );
     assert.isFalse(cache.has("cliproxy#key"));

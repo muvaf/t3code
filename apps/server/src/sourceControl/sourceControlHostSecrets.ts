@@ -105,9 +105,10 @@ const collectUsageLimitSecretReferences = (
   );
 
 const collectDeviceHostSecretReferences = (
-  settings: Pick<ServerSettings, "easDeviceHosts" | "simlockDeviceHosts">,
+  settings: Pick<ServerSettings, "easDeviceHosts" | "simlockDeviceHosts" | "limrunDeviceHosts">,
 ): ReadonlyArray<SecretReference> =>
   [
+    ...settings.limrunDeviceHosts.map(({ apiKey }) => apiKey),
     ...settings.easDeviceHosts.map(({ accessToken }) => accessToken),
     ...settings.simlockDeviceHosts.map(({ agentToken }) => agentToken),
   ].filter(isSecretReference);
@@ -118,7 +119,11 @@ export const invalidateSettingsSecrets = Effect.fn("SettingsSecrets.invalidate")
   settings: Effect.Effect<
     Pick<
       ServerSettings,
-      "sourceControlHosts" | "usageLimitSources" | "easDeviceHosts" | "simlockDeviceHosts"
+      | "sourceControlHosts"
+      | "usageLimitSources"
+      | "easDeviceHosts"
+      | "simlockDeviceHosts"
+      | "limrunDeviceHosts"
     >,
     E
   >,

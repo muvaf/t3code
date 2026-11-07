@@ -828,6 +828,7 @@ function DeviceIntegrationSettings() {
       <DeviceSourcesSettings
         supportsEas={state.supportsEasHosts === true}
         supportsSimlock={state.supportsSimlockHosts === true}
+        supportsLimrun={state.supportsLimrunHosts === true}
       />
     </>
   );

@@ -34,7 +34,8 @@ export function DeviceWorkspace(props: {
   const capturing = useRef(false);
   const access = useDeviceHubAccess(props.environmentId, props.device.hostId);
   // Settings and tools run commands on the device's own machine, which EAS and Simlock do not expose.
-  const runsHostCommands = props.hostKind === "local" || props.hostKind === "ssh";
+  const runsHostCommands =
+    props.hostKind === "local" || props.hostKind === "ssh" || props.hostKind === "limrun";
   const controls = useDeviceControls({
     ...props,
     access,
@@ -91,6 +92,7 @@ export function DeviceWorkspace(props: {
             hostId={props.device.hostId}
             visible={props.visible}
             serveSimOnly={props.hostKind === "simlock"}
+            limrun={props.hostKind === "limrun"}
             axOverlay={axOverlay}
             allowPhoneView
             renderControls={(view) => (
@@ -117,6 +119,8 @@ export function DeviceWorkspace(props: {
           device={props.device}
           controls={controls}
           hostDiagnostics={props.hostDiagnostics}
+          supportsLocation={props.hostKind !== "limrun" || props.device.platform === "ios"}
+          supportsOrientation={props.hostKind !== "limrun"}
           access={access}
           axOverlay={axOverlay}
           onAxOverlayChange={setAxOverlay}
