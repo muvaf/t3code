@@ -1512,8 +1512,8 @@ importers:
   packages/client-runtime:
     dependencies:
       '@limrun/ui':
-        specifier: github:limrun-inc/typescript-sdk#2a27cb8744ebe145cf1bc0a3c52d717dc9d9b349&path:/packages/ui
-        version: https://codeload.github.com/limrun-inc/typescript-sdk/tar.gz/2a27cb8744ebe145cf1bc0a3c52d717dc9d9b349#path:/packages/ui(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        specifier: 0.20.0
+        version: 0.20.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@pierre/diffs':
         specifier: 1.6.1
         version: 1.6.1(patch_hash=322ac5f5db8b5715189c010802047f8235c3a45d8ed5ca0ba60fac266e2eba34)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -4950,9 +4950,8 @@ packages:
   '@limrun/api@0.69.1':
     resolution: {integrity: sha512-aPxWiE+ZTclJO4kM/qhHRkn00E7CtsNP3+QrKO0XowNWgoA8pATxD/hoQURiruQTW1nmWQ9L21mwxrZ44ZBKlg==}
 
-  '@limrun/ui@https://codeload.github.com/limrun-inc/typescript-sdk/tar.gz/2a27cb8744ebe145cf1bc0a3c52d717dc9d9b349#path:/packages/ui':
-    resolution: {gitHosted: true, integrity: sha512-OVqnUMHxX8QcathZyGz95ysn8kd9ntEnp2GoBb+VgHjXTADIiP++5+2TtjGdHWttw4UZ9iKJMFSh82MOzNPOEA==, path: /packages/ui, tarball: https://codeload.github.com/limrun-inc/typescript-sdk/tar.gz/2a27cb8744ebe145cf1bc0a3c52d717dc9d9b349}
-    version: 0.19.0
+  '@limrun/ui@0.20.0':
+    resolution: {integrity: sha512-JrmyAeA5kAq3pcFxUPai0XLCsA2XL5up2FyyXEfAHQpVWDl3oA+T4G7Kd8vABH7IBvZxE8IrXFpotb2E2vz9tA==}
     peerDependencies:
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
@@ -15047,7 +15046,7 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@limrun/ui@https://codeload.github.com/limrun-inc/typescript-sdk/tar.gz/2a27cb8744ebe145cf1bc0a3c52d717dc9d9b349#path:/packages/ui(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
+  '@limrun/ui@0.20.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
     dependencies:
       clsx: 2.1.1
       react: 19.3.0
