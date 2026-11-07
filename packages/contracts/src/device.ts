@@ -97,7 +97,32 @@ export const SimlockDeviceHostConfig = Schema.Struct({
 });
 export type SimlockDeviceHostConfig = typeof SimlockDeviceHostConfig.Type;
 
-export type DeviceHostConfig = SshDeviceHostConfig | EasDeviceHostConfig | SimlockDeviceHostConfig;
+export const LimrunDeviceHostConfig = Schema.Struct({
+  kind: Schema.Literal("limrun"),
+  id: ConfiguredDeviceHostId,
+  label: TrimmedNonEmptyString,
+  apiKey: SettingsSecretValue.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed("")),
+    Schema.annotateKey({ settingsSecret: true }),
+  ),
+  region: TrimmedString.pipe(Schema.withDecodingDefaultKey(Effect.succeed(""))),
+  maxConcurrentSessions: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 20 })).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(2)),
+  ),
+  maxSessionMinutes: Schema.Int.check(Schema.isBetween({ minimum: 5, maximum: 240 })).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(60)),
+  ),
+  idleMinutes: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 60 })).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(10)),
+  ),
+});
+export type LimrunDeviceHostConfig = typeof LimrunDeviceHostConfig.Type;
+
+export type DeviceHostConfig =
+  | SshDeviceHostConfig
+  | EasDeviceHostConfig
+  | SimlockDeviceHostConfig
+  | LimrunDeviceHostConfig;
 
 const uniqueHostIds = Schema.makeFilter(
   (hosts: ReadonlyArray<{ readonly id: string }>) =>
@@ -115,6 +140,8 @@ export const SshDeviceHostConfigs = Schema.Array(SshDeviceHostConfig).check(uniq
 export const EasDeviceHostConfigs = Schema.Array(EasDeviceHostConfig).check(uniqueHostIds);
 
 /** Kept apart from the other host lists for the same reason as Expo hosts. */
+export const LimrunDeviceHostConfigs = Schema.Array(LimrunDeviceHostConfig).check(uniqueHostIds);
+
 export const SimlockDeviceHostConfigs = Schema.Array(SimlockDeviceHostConfig).check(uniqueHostIds);
 
 export const DeviceEasAccountInput = Schema.Struct({
@@ -224,10 +251,15 @@ const SimlockDeviceHostSummary = Schema.Struct({
   ...deviceHostSummaryFields,
   kind: Schema.Literal("simlock"),
 });
+const LimrunDeviceHostSummary = Schema.Struct({
+  ...deviceHostSummaryFields,
+  kind: Schema.Literal("limrun"),
+});
 export const DeviceHostSummary = Schema.Union([
   MachineDeviceHostSummary,
   EasDeviceHostSummary,
   SimlockDeviceHostSummary,
+  LimrunDeviceHostSummary,
 ]);
 export type DeviceHostSummary = typeof DeviceHostSummary.Type;
 
@@ -268,6 +300,7 @@ const deviceServiceStateFields = {
   supportsEasHosts: Schema.optional(Schema.Boolean),
   /** Servers from before Simlock hosts ignore `simlockDeviceHosts`. */
   supportsSimlockHosts: Schema.optional(Schema.Boolean),
+  supportsLimrunHosts: Schema.optional(Schema.Boolean),
   hostStatus: DeviceHostStatus,
   hostStatusDetail: Schema.optional(Schema.String),
   hostStatuses: DeviceHostStatuses,
@@ -292,6 +325,7 @@ const DeviceServiceStateWire = Schema.Struct({
   hosts: Schema.Array(MachineDeviceHostSummary),
   easHosts: Schema.optional(Schema.Array(EasDeviceHostSummary)),
   simlockHosts: Schema.optional(Schema.Array(SimlockDeviceHostSummary)),
+  limrunHosts: Schema.optional(Schema.Array(LimrunDeviceHostSummary)),
 });
 const DeviceServiceStateDecoded = Schema.Struct({
   ...deviceServiceStateFields,
@@ -305,9 +339,14 @@ export const DeviceServiceState = DeviceServiceStateWire.pipe(
       typeof DeviceServiceStateDecoded.Type,
       typeof DeviceServiceStateWire.Type
     >({
-      decode: ({ easHosts, simlockHosts, ...state }) => ({
+      decode: ({ easHosts, simlockHosts, limrunHosts, ...state }) => ({
         ...state,
-        hosts: [...state.hosts, ...(easHosts ?? []), ...(simlockHosts ?? [])],
+        hosts: [
+          ...state.hosts,
+          ...(easHosts ?? []),
+          ...(simlockHosts ?? []),
+          ...(limrunHosts ?? []),
+        ],
       }),
       encode: (state) => ({
         ...state,
@@ -317,6 +356,9 @@ export const DeviceServiceState = DeviceServiceStateWire.pipe(
         ),
         easHosts: state.hosts.filter(
           (host): host is typeof EasDeviceHostSummary.Type => host.kind === "eas",
+        ),
+        limrunHosts: state.hosts.filter(
+          (host): host is typeof LimrunDeviceHostSummary.Type => host.kind === "limrun",
         ),
         simlockHosts: state.hosts.filter(
           (host): host is typeof SimlockDeviceHostSummary.Type => host.kind === "simlock",

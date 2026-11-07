@@ -733,7 +733,7 @@ export function createDeviceStreamClient(
         return;
       }
       if (response.status === 401 || response.status === 403) return handleUnauthorized();
-      if (response.status === 409 && !target.panelId) {
+      if (response.status === 409) {
         const locked = decodeTransportLocked(await response.json().catch(() => null));
         if (Option.isSome(locked)) {
           if (!isCurrent()) return;
@@ -889,7 +889,11 @@ export function createDeviceStreamClient(
   };
 
   const webRtcUrl = (action: "offer" | "close") =>
-    httpUrl(avcc ? `/helper/${device}/webrtc/${action}` : `/webrtc/${action}?device=${device}`);
+    httpUrl(
+      avcc
+        ? `/helper/${device}/webrtc/${action}${target.panelId ? `?panel=${target.panelId}` : ""}`
+        : `/webrtc/${action}?device=${device}`,
+    );
 
   const closePeer = () => {
     const current = peer;

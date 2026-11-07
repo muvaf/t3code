@@ -41,6 +41,7 @@
     "@effect/platform-node": "catalog:",
     "@effect/platform-node-shared": "catalog:",
     "@ff-labs/fff-node": "0.11.0",
+    "@limrun/api": "github:limrun-inc/typescript-sdk#a13f4f093d5f4448135c40c12a174b52da2d0d07",
     "@muse-code/sdk": "1.4.6",
     "@napi-rs/keyring": "^1.3.0",
     "@t3tools/provider-acp": "workspace:*",

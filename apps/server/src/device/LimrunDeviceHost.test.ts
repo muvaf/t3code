@@ -1,0 +1,356 @@
+import type { DeviceHostSession } from "@limrun/api/serve-sim-host";
+import { describe, expect, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
+import * as Scope from "effect/Scope";
+import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
+import * as TestClock from "effect/testing/TestClock";
+import * as Queue from "effect/Queue";
+import { HttpClient, HttpClientResponse } from "effect/http";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import type { LimrunDeviceHostConfig } from "@t3tools/contracts";
+import * as ServerConfig from "../config.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import * as LimrunApi from "./LimrunApi.ts";
+import * as LimrunDeviceHost from "./LimrunDeviceHost.ts";
+
+const config: LimrunDeviceHostConfig = {
+  kind: "limrun",
+  id: "cloud",
+  label: "Limrun",
+  apiKey: "organization-key",
+  region: "",
+  maxConcurrentSessions: 1,
+  maxSessionMinutes: 10,
+  idleMinutes: 2,
+};
+const layer = ServerConfig.layerTest(process.cwd(), { prefix: "t3-limrun-host-" }).pipe(
+  Layer.provideMerge(NodeServices.layer),
+);
+const fixture = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const removed: string[] = [];
+  const commands: Array<ProcessRunner.ProcessRunInput> = [];
+  const connections = new Set<string>();
+  const sessions = new Map<string, DeviceHostSession>();
+  const daemonHealthy = yield* Ref.make(true);
+  const heartbeatFails = yield* Ref.make(false);
+  const heartbeatRequests = yield* Queue.unbounded<void>();
+  const heartbeats: Array<{
+    authorization: string | undefined;
+    body: { method: string; params: Record<string, unknown> };
+  }> = [];
+  let sequence = 0;
+  const api = LimrunApi.LimrunApi.of({
+    createHost: (key, options) => {
+      expect(key).toBe("organization-key");
+      expect(options.owner.label).toBe("t3code-host");
+      expect(options.hardTimeout).toBe("10m");
+      return Effect.succeed({
+        origin: "http://127.0.0.1:12345",
+        headers: { authorization: "Bearer hub-secret" },
+        list: async () => [...sessions.values()],
+        open: async (target) => {
+          const id = `${target.platform}_${++sequence}`;
+          const session: DeviceHostSession = {
+            ...target,
+            id,
+            slot: `slot-${sequence}`,
+            instance: {
+              metadata: { id, createdAt: "2026-11-08T00:00:00Z", organizationId: "org_test" },
+              spec: { region: "useb", inactivityTimeout: "2m" },
+              status: { state: "ready" },
+            },
+            agentEnv:
+              target.platform === "ios"
+                ? {
+                    LIM_IOS_INSTANCE_URL: `https://instance.test/${id}`,
+                    LIM_IOS_INSTANCE_TOKEN: `token-${id}`,
+                  }
+                : {
+                    LIM_ANDROID_INSTANCE_URL: `https://instance.test/${id}`,
+                    LIM_ANDROID_INSTANCE_TOKEN: `token-${id}`,
+                    LIM_ANDROID_INSTANCE_ADB_URL: `wss://instance.test/${id}/adb`,
+                  },
+          };
+          sessions.set(id, session);
+          return session;
+        },
+        remove: async (id) => {
+          removed.push(id);
+          sessions.delete(id);
+        },
+        stop: async () => {
+          sessions.clear();
+          return [];
+        },
+        close: async () => {
+          sessions.clear();
+        },
+        screenshot: async () => new Uint8Array(Buffer.from("image")),
+        run: async () => ({ stdout: "", stderr: "", code: 0 }),
+      });
+    },
+  });
+  const runner = ProcessRunner.ProcessRunner.of({
+    run: (input) =>
+      Effect.gen(function* () {
+        commands.push(input);
+        const directory = input.env!.AGENT_DEVICE_STATE_DIR!;
+        const staleConnection =
+          input.args[1] === "connect" &&
+          connections.has(directory) &&
+          !input.args.includes("--force");
+        if (input.args[1] === "connect") connections.add(directory);
+        if (input.args[1] === "devices")
+          yield* fs.writeFileString(
+            `${directory}/daemon.json`,
+            JSON.stringify({ httpPort: 4500 + commands.length, token: "daemon-token" }),
+          );
+        if (input.args[1] === "boot") {
+          const session = input.args[input.args.indexOf("--session") + 1]!;
+          yield* fs.makeDirectory(`${directory}/remote-connections`, { recursive: true });
+          yield* fs.writeFileString(
+            `${directory}/remote-connections/${session}.json`,
+            JSON.stringify({
+              session,
+              tenant: "limrun",
+              runId: "run-1",
+              leaseId: "a".repeat(32),
+              leaseBackend: "ios-simulator",
+              leaseProvider: "limrun",
+              deviceKey: "ios:simulator:device-1",
+              clientId: "client-1",
+            }),
+          );
+        }
+        return {
+          stdout: staleConnection
+            ? '{"error":{"code":"INVALID_ARGS","message":"A different remote connection is already active for this session."}}'
+            : "{}",
+          stderr: "",
+          code: ChildProcessSpawner.ExitCode(staleConnection ? 1 : 0),
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
+        };
+      }).pipe(Effect.orDie),
+  });
+  const scope = yield* Scope.make();
+  yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+  const host = yield* LimrunDeviceHost.make(
+    config,
+    Effect.succeed({ nodePath: "node", entryPath: "/agent/main.mjs" }),
+  ).pipe(
+    Effect.provideService(LimrunApi.LimrunApi, api),
+    Effect.provideService(ProcessRunner.ProcessRunner, runner),
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.make((request) =>
+        Effect.gen(function* () {
+          if (request.url.endsWith("/rpc")) {
+            if (request.body._tag !== "Uint8Array")
+              return yield* Effect.die("Expected JSON request");
+            const body = JSON.parse(new TextDecoder().decode(request.body.body)) as {
+              method: string;
+              params: Record<string, unknown>;
+            };
+            heartbeats.push({ authorization: request.headers.authorization, body });
+            const payload = (yield* Ref.get(heartbeatFails))
+              ? { error: { code: -32000, message: "Lease expired" } }
+              : { result: { ok: true, data: { lease: { leaseId: String(body.params.leaseId) } } } };
+            yield* Queue.offer(heartbeatRequests, undefined);
+            return {
+              ...HttpClientResponse.fromWeb(request, Response.json(payload)),
+              json: Effect.succeed(payload),
+            };
+          }
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response("ok", { status: (yield* Ref.get(daemonHealthy)) ? 200 : 503 }),
+          );
+        }),
+      ),
+    ),
+    Effect.provideService(Scope.Scope, scope),
+    Effect.provideService(HostProcess.Environment, {
+      LIMRUN_API_KEY: "wrong-inherited-key",
+      LIM_IOS_INSTANCE_TOKEN: "unrelated",
+      AGENT_DEVICE_DAEMON_BASE_URL: "https://unrelated.test",
+    }),
+    Effect.provideService(SecretResolver.SecretResolver, {
+      read: () => Effect.succeed([]),
+      invalidate: () => Effect.void,
+      label: (id) => Effect.succeed(id),
+    }),
+  );
+  const ready = yield* host.ensureReady(() => Effect.void);
+  return {
+    host,
+    ready,
+    removed,
+    commands,
+    sessions,
+    daemonHealthy,
+    heartbeats,
+    heartbeatFails,
+    heartbeatRequests,
+  };
+});
+
+describe("Limrun host binding", () => {
+  it.effect("renews the current lease over authenticated HTTP without spawning commands", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const fs = yield* FileSystem.FileSystem;
+      const device = (yield* f.ready.devices.list).devices.find((item) => item.platform === "ios")!;
+      const id = yield* f.ready.devices.boot(device);
+      yield* TestClock.adjust("30 seconds");
+      expect(f.heartbeats).toEqual([]);
+      const endpoint = yield* f.ready.devices.agentEndpoint!(id);
+      const commandCount = f.commands.length;
+      yield* TestClock.adjust("30 seconds");
+      yield* Queue.take(f.heartbeatRequests);
+      expect(f.heartbeats).toEqual([
+        {
+          authorization: "Bearer daemon-token",
+          body: expect.objectContaining({
+            method: "agent_device.lease.heartbeat",
+            params: {
+              session: endpoint.session,
+              tenantId: "limrun",
+              runId: "run-1",
+              leaseId: "a".repeat(32),
+              backend: "ios-simulator",
+              leaseProvider: "limrun",
+              deviceKey: "ios:simulator:device-1",
+              clientId: "client-1",
+            },
+          }),
+        },
+      ]);
+      const file = `${endpoint.stateDir}/remote-connections/${endpoint.session}.json`;
+      const original = yield* fs.readFileString(file);
+      yield* fs.writeFileString(file, original.replace("a".repeat(32), "b".repeat(32)));
+      yield* Ref.set(f.heartbeatFails, true);
+      yield* TestClock.adjust("30 seconds");
+      yield* Queue.take(f.heartbeatRequests);
+      yield* Ref.set(f.heartbeatFails, false);
+      yield* TestClock.adjust("30 seconds");
+      yield* Queue.take(f.heartbeatRequests);
+      expect(f.heartbeats).toHaveLength(3);
+      expect(f.heartbeats.at(-1)?.body.params.leaseId).toBe("b".repeat(32));
+      expect(f.commands).toHaveLength(commandCount);
+      yield* f.host.stopAgent;
+      yield* TestClock.adjust("30 seconds");
+      expect(f.heartbeats).toHaveLength(3);
+      yield* f.ready.devices.shutdown({ id, platform: "ios" });
+      yield* TestClock.adjust("30 seconds");
+      expect(f.heartbeats).toHaveLength(3);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+  it.effect(
+    "rebinds the Limrun session after the shared manager replaces an unhealthy daemon",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        const template = (yield* f.ready.devices.list).devices.find(
+          (device) => device.platform === "ios",
+        )!;
+        const id = yield* f.ready.devices.boot(template, { workspaceRoot: "/project" });
+        const first = yield* f.ready.devices.agentEndpoint!(id);
+        expect(yield* f.ready.devices.agentEndpoint!(id)).toEqual(first);
+        expect(f.commands.map((command) => command.args[1])).toEqual([
+          "devices",
+          "connect",
+          "boot",
+        ]);
+
+        yield* Ref.set(f.daemonHealthy, false);
+        const restarted = yield* f.ready.devices.agentEndpoint!(id);
+        expect(restarted.baseUrl).not.toBe(first.baseUrl);
+        expect(restarted.session).toBe(first.session);
+        expect(restarted.stateDir).toBe(first.stateDir);
+        expect(f.commands.map((command) => command.args[1])).toEqual([
+          "devices",
+          "connect",
+          "boot",
+          "devices",
+          "connect",
+          "boot",
+        ]);
+        for (const command of f.commands) {
+          expect(command.cwd).toBe("/project");
+          expect(command.env?.AGENT_DEVICE_STATE_DIR).toBe(first.stateDir);
+          expect(command.env?.AGENT_DEVICE_DAEMON_IDLE_TIMEOUT_MS).toBe("0");
+          expect(command.env?.LIM_IOS_INSTANCE_TOKEN).toBe(`token-${id}`);
+          if (command.args[1] !== "devices") expect(command.args).toContain(first.session);
+        }
+        yield* f.host.stopAgent;
+        expect(f.commands.at(-1)?.args).toEqual([
+          "/agent/main.mjs",
+          "daemon",
+          "stop",
+          "--state-dir",
+          first.stateDir,
+        ]);
+        expect(f.removed).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("isolates attached agent credentials and proxies only owned instances", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const devices = (yield* f.ready.devices.list).devices;
+      const id = yield* f.ready.devices.boot(devices.find((d) => d.platform === "android")!);
+      const endpoint = yield* f.ready.devices.agentEndpoint!(id);
+      expect(endpoint.agentDeviceId).toBeNull();
+      expect(endpoint.stateDir).toContain("/limrun/cloud/");
+      const env = f.commands[0]!.env!;
+      expect(env.LIMRUN_API_KEY).toBeUndefined();
+      expect(env.LIM_IOS_INSTANCE_TOKEN).toBeUndefined();
+      expect(env.AGENT_DEVICE_DAEMON_BASE_URL).toBeUndefined();
+      expect(env.LIM_ANDROID_INSTANCE_TOKEN).toBe(`token-${id}`);
+      expect(env.LIM_ANDROID_INSTANCE_ADB_URL).toContain(id);
+      expect(
+        yield* f.ready.upstream!(`/vendor/serve-emu/api`, new URLSearchParams({ device: id })),
+      ).toEqual({
+        url: `http://127.0.0.1:12345/vendor/serve-emu/api?device=${id}`,
+        headers: { authorization: "Bearer hub-secret" },
+        protocols: [],
+      });
+      yield* f.host.stopAgent;
+      expect(f.removed).toEqual([]);
+      expect(f.commands.at(-1)!.args.slice(1, 3)).toEqual(["daemon", "stop"]);
+      yield* f.ready.devices.shutdown({ id, platform: "android" });
+      expect(f.removed).toEqual([id]);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("retains Duo identity and stops automation when an instance ends externally", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const template = (yield* f.ready.devices.list).devices.find(
+        (device) => device.id === "limrun:ios:iphone-duo",
+      )!;
+      const id = yield* f.ready.devices.boot(template);
+      expect((yield* f.ready.devices.list).devices.find((device) => device.id === id)?.name).toBe(
+        "iPhone Duo",
+      );
+      yield* f.ready.devices.agentEndpoint!(id);
+      expect(f.commands[0]!.env!.LIM_IOS_INSTANCE_TOKEN).toBe(`token-${id}`);
+      f.sessions.delete(id);
+      expect((yield* f.ready.devices.list).devices.some((device) => device.id === id)).toBe(false);
+      expect(f.commands.at(-1)!.args.slice(1, 3)).toEqual(["daemon", "stop"]);
+      expect(f.removed).toEqual([]);
+      expect((yield* f.ready.devices.agentEndpoint!(id).pipe(Effect.result))._tag).toBe("Failure");
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+});

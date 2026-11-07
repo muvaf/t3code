@@ -212,7 +212,7 @@ export function DeviceToolsPanel(props: {
                   ariaLabel="Color filter"
                   value={settings?.colorFilter ?? null}
                   options={COLOR_FILTERS}
-                  disabled={disabled}
+                  disabled={disabled || settings?.colorFilter === undefined}
                   onChange={(value) => act({ type: "setColorFilter", value })}
                 />
               </Row>

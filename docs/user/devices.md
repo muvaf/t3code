@@ -23,8 +23,8 @@ device in a small window while the right panel shows something else; drag the
 window by its handle, resize it from any edge, and use **Open in right panel**
 to bring it back.
 Turn off **Use devices** in **Settings → Devices** to stop the
-helper processes; simulators and emulators keep running until you power them
-off.
+helper processes. Local and SSH simulators keep running until you power them
+off; Limrun instances terminate.
 
 Simulators run on the machine that hosts the environment server. iOS needs
 macOS with Xcode. Android needs the SDK Platform-Tools, Android Emulator,
@@ -126,6 +126,46 @@ T3 provides discovery, streaming, and control. Arrange app builds,
 installation, and connectivity to development servers such as Metro separately.
 A simulator on another machine cannot reach Metro through your environment's
 localhost without forwarding or another reachable address.
+
+## Limrun cloud devices
+
+To run devices without hosting simulators yourself, choose **Settings → Devices →
+Add source → Limrun**. Enter a Limrun API key with device lifecycle and control
+permissions, or set `LIMRUN_API_KEY` on the environment server. You can store the
+key in T3's secret store or select a connected secret provider. Choose a region,
+maximum device count, and time limit, then open an iPhone, iPhone Duo, iPad,
+Android phone, or tablet from the Device panel.
+
+Choose **iPhone Duo** to test your app across folds. Use the fold controls to
+switch between the cover and inner screen, or pinch the hinge in the 3D view.
+The mobile viewer also has fold controls. Limrun supports hinge angles and
+rotation; the local simulator’s laptop and tent stand presets are unavailable.
+
+T3 creates and owns these instances. Power off a device when finished; closing
+its tab only stops watching it. Agents should use `device_close` with
+`shutdown: true`. Removing the Limrun source or disabling device support also
+terminates its instances. The hard timeout still applies if T3 loses its connection.
+After restarting, T3 cleans up instances created by that installation when it
+next lists or opens Limrun devices. Other applications' instances are left alone.
+
+Video, touch, keyboard input, screenshots, accessibility overlays, and basic
+device tools work in web, desktop, and mobile viewers. Read-only viewers receive
+live video without device input or camera/microphone forwarding. Limrun video uses WebRTC;
+the browser needs network access to the media candidates supplied by Limrun,
+in addition to its connection to the T3 server.
+
+T3 supplies devices and automation. Use the Limrun Xcode, Gradle, or Expo
+skills to build your app, install it onto the instance ID returned by
+`device_open`, and connect development servers. Source syncing is handled by
+those build tools. Closing the agent-device session does not delete the instance.
+
+Use the toolbar to rotate Limrun devices. For Android, use **Orientation** and
+**Location preset** in the Tools drawer to test rotation and GPS locations.
+Some local tools remain unavailable: iOS foreground-app tracking in the Tools
+drawer, notification permission changes, and iOS accessibility preferences that
+need the local serve-sim helper. Unknown preferences are disabled. Agent-device
+provides its supported app inspection, recording, logging, and device actions
+through the returned launcher.
 
 ## Simlock hosts (alpha)
 

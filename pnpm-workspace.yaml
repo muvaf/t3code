@@ -10,6 +10,7 @@ packages:
 # true = allowed to run build scripts; false mirrors the pnpm 10 behavior
 # where anything outside onlyBuiltDependencies was silently not built.
 allowBuilds:
+  "@limrun/api@https://codeload.github.com/limrun-inc/typescript-sdk/tar.gz/a13f4f093d5f4448135c40c12a174b52da2d0d07": true
   browser-tabs-lock: false
   bufferutil: false
   core-js: false

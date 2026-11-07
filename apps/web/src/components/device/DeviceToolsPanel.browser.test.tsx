@@ -52,3 +52,35 @@ it("keeps a typed URL until opening it succeeds", async () => {
   await userEvent.click(open);
   await expect.element(field).toHaveValue("");
 });
+
+it("sends orientation and location actions for a Limrun Android device", async () => {
+  const run = vi.fn<DeviceControls["act"]>().mockResolvedValue(true);
+  await using screen = await render(
+    <DeviceToolsPanel
+      controls={{
+        detail: null,
+        pending: false,
+        error: null,
+        act: run,
+        disabled: false,
+        foregroundApp: null,
+      }}
+      hostDiagnostics={undefined}
+      device={{ ...device, hostId: "limrun", id: "android_test" }}
+      access={null}
+      axOverlay={false}
+      onAxOverlayChange={() => {}}
+      onClose={() => {}}
+    />,
+  );
+  await userEvent.click(screen.getByRole("combobox", { name: "Orientation" }));
+  await userEvent.click(screen.getByRole("option", { name: "Landscape left" }));
+  expect(run).toHaveBeenLastCalledWith({ type: "setOrientation", value: "landscape_left" });
+  await userEvent.click(screen.getByRole("combobox", { name: "Location preset" }));
+  await userEvent.click(screen.getByRole("option", { name: "San Francisco" }));
+  expect(run).toHaveBeenLastCalledWith({
+    type: "setLocation",
+    latitude: 37.7749,
+    longitude: -122.4194,
+  });
+});

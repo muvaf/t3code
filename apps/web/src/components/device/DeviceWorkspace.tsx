@@ -34,7 +34,8 @@ export function DeviceWorkspace(props: {
   const capturing = useRef(false);
   const access = useDeviceHubAccess(props.environmentId, props.device.hostId);
   // Settings and tools run commands on the device's own machine, which Expo and Simlock do not expose.
-  const runsHostCommands = props.hostKind === "local" || props.hostKind === "ssh";
+  const runsHostCommands =
+    props.hostKind === "local" || props.hostKind === "ssh" || props.hostKind === "limrun";
   const controls = useDeviceControls({
     ...props,
     access,

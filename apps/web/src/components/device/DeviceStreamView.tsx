@@ -276,7 +276,7 @@ export function DeviceStreamView(props: {
                   deviceKey={deviceScreenKey(props.environmentId, props.hostId, props.deviceId)}
                   renewAccess={() => renewDeviceHubAccess(props.environmentId, props.hostId)}
                 />
-              ) : showPhone && isDuo && screen?.supportsHingeAngle ? (
+              ) : isDuo && screen?.supportsHingeAngle ? (
                 <DeviceDuoControls
                   screen={screen}
                   state={duoControl}

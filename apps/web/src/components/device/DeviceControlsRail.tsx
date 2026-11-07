@@ -52,7 +52,8 @@ export function DeviceControlsRail(props: {
   const popupSide = "left";
   const settings = controls.detail?.settings;
   const inputDisabled = !handle?.inputConnected;
-  const runsHostCommands = props.hostKind === "local" || props.hostKind === "ssh";
+  const runsHostCommands =
+    props.hostKind === "local" || props.hostKind === "ssh" || props.hostKind === "limrun";
   const nextAppearance = settings?.appearance === "dark" ? "light" : "dark";
   return (
     <aside
