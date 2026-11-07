@@ -35,6 +35,7 @@ const fixture = Effect.gen(function* () {
   const records = new Map<string, LimrunApi.Instance>();
   const createdModels: string[] = [];
   let sequence = 0;
+  let activeDisplays = ["outer", "inner"];
   let refuseDelete = false;
   let loseCreateResponse = false;
   const slots = new Map<string, LimrunApi.Instance>();
@@ -54,7 +55,7 @@ const fixture = Effect.gen(function* () {
             organizationId: "org_test",
             labels: { "t3code-host": input.owner },
           },
-          spec: { region: "useb", inactivityTimeout: "2m" },
+          spec: { region: "useb", inactivityTimeout: "2m", model: input.model },
           status: {
             state: "ready",
             apiUrl: `https://region.test/v1/${id}/api`,
@@ -88,15 +89,22 @@ const fixture = Effect.gen(function* () {
         records.delete(id);
         return Effect.void;
       }),
-    connect: (_instance, platform) =>
+    connect: (instance, platform) =>
       Effect.succeed({
         platform,
         client: {
           disconnect() {},
           keepAlive() {},
-          screenshot: async () => ({
-            base64: "aW1hZ2U=",
-            dataUri: "data:image/png;base64,aW1hZ2U=",
+          screenshot: async () => {
+            if ("model" in instance.spec && instance.spec.model === "iphone-duo")
+              throw new Error("Multiple Duo displays are active");
+            return { base64: "aW1hZ2U=", dataUri: "data:image/png;base64,aW1hZ2U=" };
+          },
+          getFoldState: async () => ({
+            displays: ["outer", "inner"].map((id) => ({ id, active: activeDisplays.includes(id) })),
+          }),
+          screenshotDisplay: async (display: string) => ({
+            base64: Buffer.from(display).toString("base64"),
           }),
           startEventCapture: async () => {},
           streamEventCapture: () => () => {},
@@ -153,6 +161,9 @@ const fixture = Effect.gen(function* () {
     commands,
     records,
     createdModels,
+    setActiveDisplays: (displays: string[]) => {
+      activeDisplays = displays;
+    },
     loseCreateResponse: () => {
       loseCreateResponse = true;
     },
@@ -204,6 +215,16 @@ describe("Limrun device ownership", () => {
       expect((yield* f.ready.devices.list).devices.find((d) => d.id === id)?.name).toBe(
         "iPhone Duo",
       );
+      for (const [active, expected] of [
+        [["outer", "inner"], "outer"],
+        [["inner"], "inner"],
+        [["outer"], "outer"],
+        [[], "outer"],
+      ] as const) {
+        f.setActiveDisplays([...active]);
+        const shot = yield* f.ready.devices.screenshot({ ...device, id, booted: true });
+        expect(Buffer.from(shot).toString()).toBe(expected);
+      }
       const endpoint = yield* f.ready.devices.agentEndpoint!(id);
       expect(endpoint.stateDir).toContain("/limrun/cloud/");
       expect(f.commands[0]!.env!.LIM_IOS_INSTANCE_TOKEN).toBe(`token-${id}`);

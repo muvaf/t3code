@@ -431,11 +431,18 @@ export const make = Effect.fn("LimrunDeviceHost.make")(function* (
         const item = live.get(device.id);
         if (!item) return yield* unavailable("Instance has ended.");
         const connected = yield* runtime(item);
-        const shot = yield* LimrunApi.request("screenshot", async () =>
-          connected.platform === "ios"
-            ? (await connected.client.screenshot({ format: "png" })).base64
-            : (await connected.client.screenshot()).dataUri.split(",")[1]!,
-        );
+        const shot = yield* LimrunApi.request("screenshot", async () => {
+          if (connected.platform === "android")
+            return (await connected.client.screenshot()).dataUri.split(",")[1]!;
+          if ("model" in item.instance.spec && item.instance.spec.model === "iphone-duo") {
+            const fold = await connected.client.getFoldState();
+            const active = fold?.displays.filter((display) => display.active) ?? [];
+            // Folding can activate both panels; the primary stream shows the outer display.
+            const display = active.length === 1 ? active[0]!.id : "outer";
+            return (await connected.client.screenshotDisplay(display, { format: "png" })).base64;
+          }
+          return (await connected.client.screenshot({ format: "png" })).base64;
+        });
         return new Uint8Array(Buffer.from(shot, "base64"));
       },
       Effect.mapError(failed("screenshot")),
