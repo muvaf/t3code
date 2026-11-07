@@ -33,6 +33,7 @@ const fixture = Effect.gen(function* () {
   const removed: string[] = [];
   const commands: Array<ProcessRunner.ProcessRunInput> = [];
   const records = new Map<string, LimrunApi.Instance>();
+  const createdModels: string[] = [];
   let sequence = 0;
   let refuseDelete = false;
   let loseCreateResponse = false;
@@ -43,6 +44,7 @@ const fixture = Effect.gen(function* () {
         const existing = slots.get(input.slot);
         if (existing) return existing;
         expect(input.hardMinutes).toBe(10);
+        createdModels.push(input.model);
         const id = `${platform}_${++sequence}`;
         const instance = {
           metadata: {
@@ -52,7 +54,7 @@ const fixture = Effect.gen(function* () {
             organizationId: "org_test",
             labels: { "t3code-host": input.owner },
           },
-          spec: { model: "iphone", region: "useb", inactivityTimeout: "2m" },
+          spec: { region: "useb", inactivityTimeout: "2m" },
           status: {
             state: "ready",
             apiUrl: `https://region.test/v1/${id}/api`,
@@ -150,6 +152,7 @@ const fixture = Effect.gen(function* () {
     removed,
     commands,
     records,
+    createdModels,
     loseCreateResponse: () => {
       loseCreateResponse = true;
     },
@@ -186,6 +189,25 @@ describe("Limrun device ownership", () => {
       expect(f.removed).toEqual([]);
       expect(f.commands.at(-1)!.args.slice(1, 3)).toEqual(["daemon", "stop"]);
       yield* f.ready.devices.shutdown({ id, platform: "android" });
+      expect(f.removed).toEqual([id]);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("provisions the Duo model and retains its identity for viewers and automation", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const catalog = (yield* f.ready.devices.list).devices;
+      const device = catalog.find((d) => d.id === "limrun:ios:iphone-duo")!;
+      expect(device).toBeDefined();
+      const id = yield* f.ready.devices.boot(device);
+      expect(f.createdModels).toEqual(["iphone-duo"]);
+      expect((yield* f.ready.devices.list).devices.find((d) => d.id === id)?.name).toBe(
+        "iPhone Duo",
+      );
+      const endpoint = yield* f.ready.devices.agentEndpoint!(id);
+      expect(endpoint.stateDir).toContain("/limrun/cloud/");
+      expect(f.commands[0]!.env!.LIM_IOS_INSTANCE_TOKEN).toBe(`token-${id}`);
+      yield* f.ready.devices.shutdown({ id, platform: "ios" });
       expect(f.removed).toEqual([id]);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );

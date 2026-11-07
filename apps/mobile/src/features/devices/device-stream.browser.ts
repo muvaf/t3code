@@ -82,11 +82,58 @@ export function start(configuration: DeviceStreamConfiguration) {
   });
   frame.append(canvas, image);
   container.append(frame);
-  document.body.replaceChildren(container, inputStatus);
+  const duoControls = document.createElement("div");
+  duoControls.setAttribute("role", "group");
+  duoControls.setAttribute("aria-label", "Duo hinge");
+  Object.assign(duoControls.style, {
+    position: "fixed",
+    bottom: "48px",
+    left: "50%",
+    transform: "translateX(-50%)",
+    display: "none",
+    gap: "8px",
+    alignItems: "center",
+  });
+  const folds = [
+    ["Fold", 0],
+    ["Half open", 90],
+    ["Unfold", 180],
+  ] as const;
+  const foldButtons = folds.map(([label, angle]) => {
+    const button = document.createElement("button");
+    button.textContent = label;
+    button.disabled = true;
+    Object.assign(button.style, {
+      background: colors.buttonBackground,
+      color: colors.buttonForeground,
+      border: `1px solid ${colors.buttonBorder}`,
+      borderRadius: "12px",
+      padding: "10px",
+    });
+    button.addEventListener("click", () => client.controlDuo({ control: "angle", value: angle }));
+    duoControls.append(button);
+    return button;
+  });
+  const duoError = document.createElement("div");
+  duoError.setAttribute("role", "status");
+  Object.assign(duoError.style, {
+    position: "fixed",
+    bottom: "20px",
+    left: "12px",
+    right: "12px",
+    textAlign: "center",
+    color: colors.foreground,
+  });
+  document.body.replaceChildren(container, inputStatus, duoControls, duoError);
 
   let pointerId: number | null = null;
   let inputConnected = false;
   let streaming = false;
+  let foldPending = false;
+  const enableFolds = () =>
+    foldButtons.forEach((button) => {
+      button.disabled = !inputConnected || foldPending;
+    });
   const reportStatus = (status: "connecting" | "streaming" | "error", detail?: string) => {
     if (activeClient !== client) return;
     streaming = status === "streaming";
@@ -94,6 +141,9 @@ export function start(configuration: DeviceStreamConfiguration) {
     post({ type: "status", status, detail });
   };
   const layout = (screen: DeviceScreenSize | null) => {
+    duoControls.style.display = screen?.supportsHingeAngle ? "flex" : "none";
+    for (const [index, button] of foldButtons.entries())
+      button.setAttribute("aria-pressed", String(screen?.hingeAngle === folds[index]![1]));
     const landscape =
       screen?.orientation === "landscape_left" || screen?.orientation === "landscape_right";
     const aspect = screen
@@ -133,6 +183,12 @@ export function start(configuration: DeviceStreamConfiguration) {
   const client = createDeviceStreamClient(configuration, canvas, {
     onStatus: reportStatus,
     onScreen: layout,
+    onDuoControl: (state) => {
+      if (activeClient !== client) return;
+      foldPending = state.pending;
+      duoError.textContent = state.error ?? "";
+      enableFolds();
+    },
     onMjpegFallback: () => {
       canvas.style.display = "none";
       image.style.display = "block";
@@ -144,6 +200,7 @@ export function start(configuration: DeviceStreamConfiguration) {
     onUnauthorized: unauthorized,
     onInputConnected: (connected) => {
       inputConnected = connected;
+      enableFolds();
       inputStatus.style.display = streaming && !connected ? "block" : "none";
       post({ type: "input", connected });
     },

@@ -90,20 +90,22 @@ export function DeviceDuoControls(props: {
           ),
         )}
       </div>
-      <div role="group" aria-label="Device stance" className={group}>
-        {STANDS.map(({ id, label }) =>
-          button(
-            id,
-            label,
-            screen.hingePose === id,
-            () => {
-              if (!stand) setStandVertical(settledVertical);
-              props.onCommand({ control: "pose", value: id });
-            },
-            <DeviceDuoGlyph pose={id} />,
-          ),
-        )}
-      </div>
+      {screen.supportsPhysicalOrientation !== false && (
+        <div role="group" aria-label="Device stance" className={group}>
+          {STANDS.map(({ id, label }) =>
+            button(
+              id,
+              label,
+              screen.hingePose === id,
+              () => {
+                if (!stand) setStandVertical(settledVertical);
+                props.onCommand({ control: "pose", value: id });
+              },
+              <DeviceDuoGlyph pose={id} />,
+            ),
+          )}
+        </div>
+      )}
       {props.state.error ? (
         <Tooltip>
           <TooltipTrigger

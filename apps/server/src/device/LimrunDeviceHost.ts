@@ -56,6 +56,14 @@ const catalog: ReadonlyArray<DeviceHost.HostDevice> = [
     booted: false,
     physical: false,
   },
+  {
+    id: "limrun:ios:iphone-duo",
+    platform: "ios",
+    name: "iPhone Duo",
+    version: "iOS",
+    booted: false,
+    physical: false,
+  },
 ];
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeDaemon = Schema.decodeUnknownEffect(
