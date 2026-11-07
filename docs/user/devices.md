@@ -131,8 +131,13 @@ To run devices without hosting simulators yourself, choose **Settings → Device
 Add source → Limrun**. Enter a Limrun API key with device lifecycle and control
 permissions, or set `LIMRUN_API_KEY` on the environment server. You can store the
 key in T3's secret store or select a connected secret provider. Choose a region,
-maximum device count, and time limit, then open an iPhone, iPad, Android phone,
-or tablet from the Device panel.
+maximum device count, and time limit, then open an iPhone, iPhone Duo, iPad,
+Android phone, or tablet from the Device panel.
+
+Choose **iPhone Duo** to test your app across folds. Use the fold controls to
+switch between the cover and inner screen, or pinch the hinge in the 3D view.
+The mobile viewer also has fold controls. Limrun supports hinge angles and
+rotation; the local simulator’s laptop and tent stand presets are unavailable.
 
 T3 creates and owns these instances. Power off a device when finished; closing
 its tab only stops watching it. Agents should use `device_close` with

@@ -1,4 +1,11 @@
+import { createDeviceStreamClient } from "@t3tools/client-runtime/device/stream";
 import { describe, expect, it, vi } from "vite-plus/test";
+
+vi.mock("@t3tools/client-runtime/device/stream", async (original) => {
+  const { createDeviceStreamClient } =
+    await original<typeof import("@t3tools/client-runtime/device/stream")>();
+  return { createDeviceStreamClient: vi.fn(createDeviceStreamClient) };
+});
 
 import { start, stop } from "./device-stream.browser";
 
@@ -105,4 +112,62 @@ describe("native iOS simulator viewer", () => {
       }
     },
   );
+});
+
+it("folds a Limrun Duo in the mobile viewer and reports rejected commands", () => {
+  const client = { start: vi.fn(), stop: vi.fn(), setMjpegImage: vi.fn(), controlDuo: vi.fn() };
+  vi.mocked(createDeviceStreamClient)
+    .mockClear()
+    .mockReturnValueOnce(client as unknown as ReturnType<typeof createDeviceStreamClient>);
+  vi.stubGlobal("ReactNativeWebView", { postMessage() {} });
+  try {
+    start({
+      platform: "ios",
+      deviceId: "ios_duo",
+      limrun: true,
+      access: {
+        httpBase: "https://t3.test/device",
+        wsBase: "wss://t3.test/device",
+        query: {},
+        credentials: false,
+      },
+      colors: {
+        background: "black",
+        foreground: "white",
+        muted: "gray",
+        buttonBackground: "black",
+        buttonForeground: "white",
+        buttonBorder: "gray",
+      },
+    });
+    const events = vi.mocked(createDeviceStreamClient).mock.calls[0]![2];
+    events.onInputConnected(true);
+    events.onScreen({
+      width: 669,
+      height: 951,
+      orientation: "landscape_left",
+      supportsHingeAngle: true,
+      hingeAngle: 180,
+    });
+    const controls = document.querySelector<HTMLElement>('[aria-label="Duo hinge"]')!;
+    expect(controls.style.display).toBe("flex");
+    const fold = controls.querySelector("button")!;
+    expect(fold.disabled).toBe(false);
+    fold.click();
+    expect(client.controlDuo).toHaveBeenCalledWith({ control: "angle", value: 0 });
+    events.onDuoControl?.({
+      pending: true,
+      requested: { control: "angle", value: 0 },
+      error: null,
+    });
+    expect(fold.disabled).toBe(true);
+    events.onDuoControl?.({ pending: false, requested: null, error: "Could not update the Duo" });
+    expect(fold.disabled).toBe(false);
+    expect(document.body.textContent).toContain("Could not update the Duo");
+    events.onInputConnected(false);
+    expect(fold.disabled).toBe(true);
+  } finally {
+    stop();
+    vi.unstubAllGlobals();
+  }
 });

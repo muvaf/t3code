@@ -1,3 +1,4 @@
+import { createDeviceStreamClient } from "@t3tools/client-runtime/device/stream";
 import { RegistryContext } from "@effect/atom-react";
 import { AtomRegistry } from "effect/reactivity";
 import "~/index.css";
@@ -5,6 +6,12 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 
 import { act, render, stubGlobal } from "../../../test/render";
+
+vi.mock("@t3tools/client-runtime/device/stream", async (original) => {
+  const { createDeviceStreamClient } =
+    await original<typeof import("@t3tools/client-runtime/device/stream")>();
+  return { createDeviceStreamClient: vi.fn(createDeviceStreamClient) };
+});
 
 vi.mock(import("~/state/device"), async (original) => ({
   ...(await original()),
@@ -205,4 +212,52 @@ it("releases flat pointer ownership when input disconnects", async () => {
     { type: "begin", x: 0.5, y: 0.5 },
     { type: "end", x: 0.75, y: 0.75 },
   ]);
+});
+
+it("offers working Limrun Duo fold controls in the flat viewer without physical stand presets", async () => {
+  const registry = AtomRegistry.make();
+  using _registry = { [Symbol.dispose]: () => registry.dispose() };
+  const client = { start: vi.fn(), stop: vi.fn(), setMjpegImage: vi.fn(), controlDuo: vi.fn() };
+  vi.mocked(createDeviceStreamClient)
+    .mockClear()
+    .mockReturnValueOnce(client as unknown as ReturnType<typeof createDeviceStreamClient>);
+  await using screen = await render(
+    <RegistryContext.Provider value={registry}>
+      <div style={{ width: 400, height: 800 }}>
+        <DeviceStreamView
+          hostId="limrun"
+          environmentId={EnvironmentId.make("test")}
+          deviceId="ios_duo"
+          deviceName="iPhone Duo"
+          platform="ios"
+          visible
+          limrun
+          allowPhoneView={false}
+          renderControls={(controls) => controls.foldingControls}
+        />
+      </div>
+    </RegistryContext.Provider>,
+    options,
+  );
+  await vi.waitFor(() => expect(createDeviceStreamClient).toHaveBeenCalledOnce());
+  const events = vi.mocked(createDeviceStreamClient).mock.calls[0]![2];
+  await act(() => {
+    events.onInputConnected(true);
+    events.onScreen({
+      width: 669,
+      height: 951,
+      orientation: "landscape_left",
+      screenId: 3,
+      supportsHingeAngle: true,
+      supportsPhysicalOrientation: false,
+      hingeAngle: 180,
+    });
+    events.onStatus("streaming");
+  });
+  await expect.element(screen.getByRole("button", { name: "Closed", exact: true })).toBeEnabled();
+  await expect
+    .element(screen.getByRole("button", { name: "Laptop stand" }))
+    .not.toBeInTheDocument();
+  await screen.getByRole("button", { name: "Closed", exact: true }).click();
+  expect(client.controlDuo).toHaveBeenCalledWith({ control: "angle", value: 0 });
 });

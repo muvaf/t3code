@@ -97,7 +97,10 @@ export const layer = Layer.succeed(
         };
         return platform === "ios"
           ? client(key).iosInstances.create(
-              { ...params, spec: { ...params.spec, model: input.model as "iphone" | "ipad" } },
+              {
+                ...params,
+                spec: { ...params.spec, model: input.model as "iphone" | "iphone-duo" | "ipad" },
+              },
               { signal },
             )
           : client(key).androidInstances.create(
