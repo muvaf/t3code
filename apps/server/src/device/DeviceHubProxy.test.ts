@@ -3,6 +3,7 @@ import {
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
   AuthSessionId,
+  DeviceOperationError,
   LOCAL_DEVICE_HOST_ID,
   type AuthEnvironmentScope,
 } from "@t3tools/contracts";
@@ -24,6 +25,7 @@ const fixture = (
   fail = false,
   authError?: EnvironmentAuth.ServerAuthCredentialError | EnvironmentAuth.ServerAuthInternalError,
   upstream?: DeviceHost.DeviceHostReady["upstream"],
+  readResponse?: DeviceHost.DeviceHostReady["readResponse"],
 ) => {
   let finalized = 0;
   const requests: string[] = [];
@@ -64,6 +66,7 @@ const fixture = (
               hostId: LOCAL_DEVICE_HOST_ID,
               hub: { origin: "http://hub.test" },
               ...(upstream ? { upstream } : {}),
+              ...(readResponse ? { readResponse } : {}),
             }),
         } as DeviceService.DeviceService["Service"]),
       ),
@@ -87,7 +90,7 @@ describe("device hub proxy", () => {
     expect(finalized()).toBe(1);
   });
 
-  it.each(["/vendor/serve-sim/helper/ws", "/vendor/serve-emu/ws"])(
+  it.each(["/vendor/serve-sim/helper/ws", "/vendor/serve-emu/ws", "/limrun/ios_owned/ws"])(
     "rejects input socket %s for a read-only session",
     async (path) => {
       const { handler, requests } = fixture([AuthOrchestrationReadScope]);
@@ -98,6 +101,39 @@ describe("device hub proxy", () => {
       expect(requests).toEqual([]);
     },
   );
+
+  it("authenticates adapter screenshots and keeps failures out of upstream routing", async () => {
+    const path = "http://t3.test/api/device-hub/limrun/ios_owned/screenshot?wsTicket=secret";
+    let calls = 0;
+    const readResponse: DeviceHost.DeviceHostReady["readResponse"] = (_route, search) =>
+      Effect.sync(() => {
+        calls++;
+        expect(search.has("wsTicket")).toBe(false);
+        return { body: new TextEncoder().encode("image"), contentType: "image/png" };
+      });
+    const denied = fixture([], false, undefined, undefined, readResponse);
+    expect((await denied.handler(new Request(path))).status).toBe(403);
+    expect(calls).toBe(0);
+    const reader = fixture([AuthOrchestrationReadScope], false, undefined, undefined, readResponse);
+    const response = await reader.handler(new Request(path));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("image/png");
+    expect(await response.text()).toBe("image");
+    expect(reader.requests).toEqual([]);
+    const failing = fixture([AuthOrchestrationReadScope], false, undefined, undefined, () =>
+      Effect.fail(
+        new DeviceOperationError({
+          operation: "screenshot",
+          reason: "request_failed",
+          cause: "private-token",
+        }),
+      ),
+    );
+    const failure = await failing.handler(new Request(path));
+    expect(failure.status).toBe(503);
+    expect(await failure.text()).not.toContain("private-token");
+    expect(failing.requests).toEqual([]);
+  });
 
   it("requires operate scope for stream tuning", async () => {
     const readOnly = fixture([AuthOrchestrationReadScope]);

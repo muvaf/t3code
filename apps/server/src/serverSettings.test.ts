@@ -1626,6 +1626,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           provider: SecretProviderId.make("personal"),
           reference: "op://Private/Expo/token",
         };
+        const limrunReference = {
+          provider: SecretProviderId.make("personal"),
+          reference: "op://Private/Limrun/key",
+        };
         const simlockReference = {
           provider: SecretProviderId.make("personal"),
           reference: "op://Private/Simlock/token",
@@ -1660,6 +1664,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
               maxSessionMinutes: 30,
               idleMinutes: 10,
               maxConcurrentSessions: 2,
+            },
+          ],
+          limrunDeviceHosts: [
+            {
+              kind: "limrun",
+              id: "limrun",
+              label: "Limrun",
+              apiKey: limrunReference,
+              region: "",
+              maxConcurrentSessions: 2,
+              maxSessionMinutes: 60,
+              idleMinutes: 10,
+              iosRunnerApp: "",
             },
           ],
           simlockDeviceHosts: [
@@ -1697,6 +1714,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         assert.equal(legacy.usageLimitSources[hub]?.managementKey, SECRET_REDACTED);
         assert.equal(legacy.easDeviceHosts[0]?.accessToken, SECRET_REDACTED);
         assert.equal(legacy.simlockDeviceHosts[0]?.agentToken, SECRET_REDACTED);
+        assert.equal(legacy.limrunDeviceHosts[0]?.apiKey, SECRET_REDACTED);
         const configOf = (settings: ServerSettings, id: ProviderInstanceId) =>
           settings.providerInstances[id]?.config as Record<string, unknown> | undefined;
         assert.equal(configOf(legacy, antigravity)?.apiKey, SECRET_REDACTED);
@@ -1707,6 +1725,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           usageLimitSources: legacy.usageLimitSources,
           easDeviceHosts: legacy.easDeviceHosts,
           simlockDeviceHosts: legacy.simlockDeviceHosts,
+          limrunDeviceHosts: legacy.limrunDeviceHosts,
           providerInstances: legacy.providerInstances,
         });
         assert.deepEqual(echoed.sourceControlHosts.bitbucket?.accessToken, reference);
@@ -1722,6 +1741,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         });
         assert.deepEqual(echoed.easDeviceHosts[0]?.accessToken, easReference);
         assert.deepEqual(echoed.simlockDeviceHosts[0]?.agentToken, simlockReference);
+        assert.deepEqual(echoed.limrunDeviceHosts[0]?.apiKey, limrunReference);
         assert.deepEqual(configOf(echoed, antigravity)?.apiKey, antigravityReference);
         assert.deepEqual(configOf(echoed, openCode)?.serverPassword, openCodeReference);
         assert.isTrue(Option.isSome(yield* stored("github", "tokens", "ghe.acme.test")));
@@ -1817,6 +1837,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         "cloudSpeechCredentials.openai",
         "cloudSpeechCredentials.xai",
         "cloudSpeechCredentials.openrouter",
+        "limrunDeviceHosts.[].apiKey",
         "easDeviceHosts.[].accessToken",
         "simlockDeviceHosts.[].agentToken",
         "usageLimitSources.*.managementKey",

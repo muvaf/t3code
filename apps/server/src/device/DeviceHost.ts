@@ -147,6 +147,10 @@ export interface DeviceOperations {
 
 export interface DeviceHostReady {
   readonly nodePath: string;
+  readonly readResponse?: (
+    route: string,
+    search: URLSearchParams,
+  ) => Effect.Effect<{ body: Uint8Array; contentType: string } | null, DeviceOperationError>;
   /**
    * Ends an agent-device session on the daemon that serves `deviceId`. Hosts
    * with a shared daemon provide it only while that daemon runs; hosts with a

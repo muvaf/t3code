@@ -4,6 +4,7 @@ import {
   CloudSpeechCredentials,
   CodexSettings,
   EasDeviceHostConfig,
+  LimrunDeviceHostConfig,
   type ProviderInstanceConfig,
   type ServerSettings,
   type SettingsSecretValue,
@@ -209,6 +210,17 @@ function mapSecretFieldGroups(
     ]),
   ) as ServerSettings["usageLimitSources"];
 
+  const limrunDeviceHosts = settings.limrunDeviceHosts.map(
+    (host) =>
+      mapFields(
+        host,
+        secretSettingsFields(LimrunDeviceHostConfig),
+        (field, serverHost) =>
+          `limrun-device-host-${encode(host.id)}-${encode(field)}` +
+          (serverHost === null ? "" : `-${encode(serverHost)}`),
+      ) as LimrunDeviceHostConfig,
+  );
+
   const easDeviceHosts = settings.easDeviceHosts.map(
     (host) =>
       mapFields(
@@ -243,6 +255,7 @@ function mapSecretFieldGroups(
     sourceControlHosts,
     usageLimitSources,
     easDeviceHosts,
+    limrunDeviceHosts,
     simlockDeviceHosts,
   };
 }

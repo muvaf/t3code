@@ -23,8 +23,8 @@ device in a small window while the right panel shows something else; drag the
 window by its handle, resize it from any edge, and use **Open in right panel**
 to bring it back.
 Turn off **Use devices** in **Settings → Devices** to stop the
-helper processes; simulators and emulators keep running until you power them
-off.
+helper processes. Local and SSH simulators keep running until you power them
+off; Limrun instances terminate.
 
 Simulators run on the machine that hosts the environment server. iOS needs
 macOS with Xcode. Android needs the SDK Platform-Tools, Android Emulator,
@@ -124,6 +124,56 @@ T3 provides discovery, streaming, and control. Arrange app builds,
 installation, and connectivity to development servers such as Metro separately.
 A simulator on another machine cannot reach Metro through your environment's
 localhost without forwarding or another reachable address.
+
+## Limrun cloud devices
+
+To run devices without hosting simulators yourself, choose **Settings → Devices →
+Add source → Limrun**. Enter a Limrun API key with device lifecycle and control
+permissions, or set `LIMRUN_API_KEY` on the environment server. You can store the
+key in T3's secret store or select a connected secret provider. Choose a region,
+maximum device count, and time limit, then open an iPhone, iPad, Android phone,
+or tablet from the Device panel.
+
+T3 creates and owns these instances. Power off a device when finished; closing
+its tab only stops watching it. Agents should use `device_close` with
+`shutdown: true`. Removing the Limrun source or disabling device support also
+terminates its instances. The hard timeout still applies if T3 loses its connection.
+After restarting, T3 cleans up instances created by that installation when it
+next lists or opens Limrun devices. Other applications' instances are left alone.
+
+Video, touch, keyboard input, screenshots, accessibility overlays, and basic
+device tools work in web, desktop, and mobile viewers. Read-only viewers receive
+periodic screenshots without a control connection. Limrun video uses WebRTC;
+the browser needs network access to the media candidates supplied by Limrun,
+in addition to its connection to the T3 server.
+
+This fork pins agent-device to a commit from `main`. For agent automation, the
+T3 server needs Git, pnpm, Java 17 or newer, and Android SDK platform 36 to build
+the matching Android helpers on first use. This source-build requirement also
+applies to local and SSH agent-device installations in this fork. Manual Limrun
+preview and input do not require that build.
+
+For iOS agent automation, provide the **iOS automation runner** path in the
+Limrun source settings, or set `AGENT_DEVICE_LIMRUN_IOS_RUNNER_APP` on the server.
+Build the runner from the pinned agent-device commit with Xcode 26, then run its
+[`package-ios-simulator-runner.sh`](https://github.com/callstack/agent-device/blob/463fd7b4d8168aadffc1b1613df96a342a47953e/scripts/package-ios-simulator-runner.sh)
+script and extract the resulting archive. Point T3 at the extracted `.app`.
+The packaging step includes Swift Testing dependencies; using the raw Xcode
+build product can leave the runner unable to start. You can build and package
+it in a Limrun Xcode sandbox and download the bundle to the T3 server.
+
+T3 supplies devices and automation. Use the Limrun Xcode, Gradle, or Expo
+skills to build your app, install it onto the instance ID returned by
+`device_open`, and connect development servers. Source syncing is handled by
+those build tools. Closing the agent-device session does not delete the instance.
+
+Use the toolbar to rotate Limrun devices; the Android orientation presets in
+the Tools drawer are disabled. Some local tools remain unavailable: Android
+GPS coordinates, iOS
+foreground-app tracking in the Tools drawer, notification permission changes,
+and iOS accessibility preferences that need the local serve-sim helper. Unknown
+preferences are disabled. Agent-device provides its supported app inspection,
+recording, logging, and device actions through the returned launcher.
 
 ## Simlock hosts (alpha)
 

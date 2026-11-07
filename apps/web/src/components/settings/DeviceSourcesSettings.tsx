@@ -1,3 +1,4 @@
+import { LimrunDeviceHostEditor } from "./LimrunDeviceHostEditor";
 import { useAtomValue } from "@effect/atom-react";
 import { Fragment, useState, type ReactNode } from "react";
 import * as Cause from "effect/Cause";
@@ -12,6 +13,7 @@ import {
   type EnvironmentId,
   type ServerSettingsPatch,
   type SimlockDeviceHostConfig,
+  type LimrunDeviceHostConfig,
   type SshDeviceHostConfig,
 } from "@t3tools/contracts";
 import { ChevronDownIcon, MoreVertical, PlusIcon } from "lucide-react";
@@ -93,6 +95,11 @@ interface SourceRow {
 
 type Editing =
   | {
+      readonly kind: "limrun";
+      readonly host: LimrunDeviceHostConfig;
+      readonly environmentId: EnvironmentId;
+    }
+  | {
       readonly kind: "ssh";
       readonly host: SshDeviceHostConfig;
       readonly original: SshDeviceHostConfig | null;
@@ -142,6 +149,7 @@ const hostPlatforms = (state: DeviceServiceState | undefined, hostId: string) =>
 export function DeviceSourcesSettings(props: {
   readonly supportsEas: boolean;
   readonly supportsSimlock: boolean;
+  readonly supportsLimrun?: boolean;
 }) {
   const { scope, environments, connectedEnvironments, environment: primary } = useSettingsScope();
   const projectScope = scope.kind === "project" || scope.kind === "checkout";
@@ -263,6 +271,35 @@ export function DeviceSourcesSettings(props: {
         },
       })),
       remove ? "EAS host not removed everywhere" : "EAS host not saved everywhere",
+    );
+    if (saved) setEditing(null);
+  };
+
+  const saveLimrun = async (
+    host: LimrunDeviceHostConfig,
+    remove: boolean,
+    previous?: LimrunDeviceHostConfig,
+  ) => {
+    const saved = await write(
+      members.map((member) => {
+        const hosts = member.settings?.limrunDeviceHosts ?? [];
+        const existing = hosts.find((candidate) => candidate.id === host.id);
+        const next =
+          previous && host.apiKey === previous.apiKey
+            ? { ...host, apiKey: existing?.apiKey ?? "" }
+            : host;
+        return {
+          environmentId: member.environmentId,
+          patch: {
+            limrunDeviceHosts: remove
+              ? hosts.filter((candidate) => candidate.id !== host.id)
+              : existing
+                ? hosts.map((candidate) => (candidate.id === host.id ? next : candidate))
+                : [...hosts, next],
+          },
+        };
+      }),
+      "Limrun source not saved everywhere",
     );
     if (saved) setEditing(null);
   };
@@ -519,6 +556,38 @@ export function DeviceSourcesSettings(props: {
     }
   }
 
+  if (props.supportsLimrun) {
+    const configured = new Map<
+      string,
+      { host: LimrunDeviceHostConfig; environmentId: EnvironmentId }
+    >();
+    for (const member of members)
+      for (const host of member.settings?.limrunDeviceHosts ?? [])
+        if (!configured.has(host.id))
+          configured.set(host.id, { host, environmentId: member.environmentId });
+    for (const { host, environmentId } of configured.values())
+      rows.push({
+        key: `limrun:${host.id}`,
+        shared: true,
+        title: host.label,
+        kind: "Limrun",
+        description: `${host.region || "Automatic region"} · Up to ${host.maxConcurrentSessions} devices, ${host.maxSessionMinutes} minutes each`,
+        environments: active.map((member) => ({
+          environmentId: member.environmentId,
+          label: member.label,
+          added: (member.settings?.limrunDeviceHosts ?? []).some(
+            (candidate) => candidate.id === host.id,
+          ),
+          platforms: hostPlatforms(member.state, host.id),
+          status: hostStatus(member.state, host.id),
+        })),
+        actions: rowActions(
+          () => setEditing({ kind: "limrun", host, environmentId }),
+          () => void saveLimrun(host, true),
+        ),
+      });
+  }
+
   const addMenu = (
     <Menu>
       <MenuTrigger
@@ -528,6 +597,29 @@ export function DeviceSourcesSettings(props: {
         <ChevronDownIcon className="size-3.5" />
       </MenuTrigger>
       <MenuPopup align="end">
+        {props.supportsLimrun && primary ? (
+          <MenuItem
+            onClick={() =>
+              setEditing({
+                kind: "limrun",
+                environmentId: primary.environmentId,
+                host: {
+                  kind: "limrun",
+                  id: randomUUID(),
+                  label: "Limrun",
+                  apiKey: "",
+                  region: "",
+                  maxConcurrentSessions: 2,
+                  maxSessionMinutes: 60,
+                  idleMinutes: 10,
+                  iosRunnerApp: "",
+                },
+              })
+            }
+          >
+            Limrun
+          </MenuItem>
+        ) : null}
         <MenuItem
           onClick={() =>
             setEditing({
@@ -572,7 +664,15 @@ export function DeviceSourcesSettings(props: {
       {rows.map((row) => (
         <DeviceSourceRow key={row.key} row={row} />
       ))}
-      {editing?.kind === "ssh" ? (
+      {editing?.kind === "limrun" ? (
+        <LimrunDeviceHostEditor
+          host={editing.host}
+          environmentId={editing.environmentId}
+          busy={busy}
+          onSave={(host) => void saveLimrun(host, false, editing.host)}
+          onClose={() => setEditing(null)}
+        />
+      ) : editing?.kind === "ssh" ? (
         <DeviceHostEditor
           key={editing.host.id}
           host={editing.host}

@@ -80,6 +80,8 @@ export function DeviceToolsPanel(props: {
   readonly controls: DeviceControls;
   readonly hostDiagnostics: string | undefined;
   readonly device: DeviceSummary;
+  readonly supportsLocation?: boolean;
+  readonly supportsOrientation?: boolean;
   readonly access: DeviceHubAccess | null;
   readonly axOverlay: boolean;
   readonly onAxOverlayChange: (enabled: boolean) => void;
@@ -212,7 +214,7 @@ export function DeviceToolsPanel(props: {
                   ariaLabel="Color filter"
                   value={settings?.colorFilter ?? null}
                   options={COLOR_FILTERS}
-                  disabled={disabled}
+                  disabled={disabled || settings?.colorFilter === undefined}
                   onChange={(value) => act({ type: "setColorFilter", value })}
                 />
               </Row>
@@ -224,7 +226,7 @@ export function DeviceToolsPanel(props: {
                 value={null}
                 placeholder="Rotate to…"
                 options={ORIENTATIONS}
-                disabled={disabled}
+                disabled={disabled || props.supportsOrientation === false}
                 onChange={(value) => act({ type: "setOrientation", value })}
               />
             </Row>
@@ -287,7 +289,7 @@ export function DeviceToolsPanel(props: {
         </Section>
 
         <LocationSection
-          disabled={disabled}
+          disabled={disabled || props.supportsLocation === false}
           canClear={isIos}
           onSet={(latitude, longitude) => act({ type: "setLocation", latitude, longitude })}
           onClear={() => act({ type: "clearLocation" })}
@@ -605,6 +607,8 @@ function PermissionsSection(props: {
 function EventLogSection(props: {
   readonly access: DeviceHubAccess;
   readonly device: DeviceSummary;
+  readonly supportsLocation?: boolean;
+  readonly supportsOrientation?: boolean;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -627,6 +631,8 @@ function EventLogSection(props: {
 function EventLogEntries(props: {
   readonly access: DeviceHubAccess;
   readonly device: DeviceSummary;
+  readonly supportsLocation?: boolean;
+  readonly supportsOrientation?: boolean;
 }) {
   const entries = useAtomValue(
     deviceEventLogAtom({

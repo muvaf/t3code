@@ -26,6 +26,7 @@ import {
   type DeviceHostConfig,
   type EasDeviceHostConfig,
   type SimlockDeviceHostConfig,
+  type LimrunDeviceHostConfig,
   type SshDeviceHostConfig,
   type DeviceHostSummary,
   LOCAL_DEVICE_HOST_ID,
@@ -75,6 +76,8 @@ import * as DeviceHost from "./DeviceHost.ts";
 import * as SshDeviceHost from "./SshDeviceHost.ts";
 import * as EasDeviceHost from "./EasDeviceHost.ts";
 import * as SimlockDeviceHost from "./SimlockDeviceHost.ts";
+import * as LimrunDeviceHost from "./LimrunDeviceHost.ts";
+import * as LimrunApi from "./LimrunApi.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { makeExpoApi } from "./ExpoApi.ts";
 import * as Exit from "effect/Exit";
@@ -303,6 +306,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       supportsToolInspection: true,
       supportsEasHosts: true,
       supportsSimlockHosts: true,
+      supportsLimrunHosts: true,
       hosts: initialHosts,
       hostStatus: initialSettings.enabled ? "idle" : "disabled",
       hostStatuses: {},
@@ -1428,7 +1432,11 @@ export const make = Effect.gen(function* () {
     yield* Effect.context<Effect.Services<ReturnType<typeof EasDeviceHost.make>>>();
   const simlockContext =
     yield* Effect.context<Effect.Services<ReturnType<typeof SimlockDeviceHost.make>>>();
-  const simlockAgentCli = Effect.fn("DeviceService.simlockAgentCli")(
+  const limrunContext =
+    yield* Effect.context<
+      Exclude<Effect.Services<ReturnType<typeof LimrunDeviceHost.make>>, LimrunApi.LimrunApi>
+    >();
+  const cloudAgentCli = Effect.fn("DeviceService.cloudAgentCli")(
     function* (hostId: string) {
       const nodePath = yield* resolveNodeExecutable("Device automation");
       const tool = yield* ensureAgentDevice(config.baseDir).pipe(
@@ -1487,9 +1495,19 @@ export const make = Effect.gen(function* () {
           if (configured.has(host.id)) continue;
           added = true;
           const hostScope = yield* Scope.fork(scope);
+          if (host.kind === "limrun") {
+            const instance = yield* LimrunDeviceHost.make(host, cloudAgentCli(host.id)).pipe(
+              Effect.provideService(Scope.Scope, hostScope),
+              Effect.provide(LimrunApi.layer),
+              Effect.provide(limrunContext),
+            );
+            hosts.set(host.id, instance);
+            configured.set(host.id, { config: host, scope: hostScope });
+            continue;
+          }
           if (host.kind === "simlock") {
             // Closing this scope releases the host's leases back to the pool.
-            const instance = yield* SimlockDeviceHost.make(host, simlockAgentCli(host.id)).pipe(
+            const instance = yield* SimlockDeviceHost.make(host, cloudAgentCli(host.id)).pipe(
               Effect.provideService(Scope.Scope, hostScope),
               Effect.provide(simlockContext),
             );
@@ -1551,11 +1569,13 @@ export const make = Effect.gen(function* () {
     readonly deviceHosts: ReadonlyArray<SshDeviceHostConfig>;
     readonly easDeviceHosts: ReadonlyArray<EasDeviceHostConfig>;
     readonly simlockDeviceHosts: ReadonlyArray<SimlockDeviceHostConfig>;
+    readonly limrunDeviceHosts: ReadonlyArray<LimrunDeviceHostConfig>;
     readonly simlockDeviceHostsEnabled: boolean;
   }): ReadonlyArray<DeviceHostConfig> => {
     const hosts: Array<DeviceHostConfig> = [...value.deviceHosts];
     for (const host of [
       ...value.easDeviceHosts,
+      ...value.limrunDeviceHosts,
       ...(value.simlockDeviceHostsEnabled ? value.simlockDeviceHosts : []),
     ]) {
       if (!hosts.some((existing) => existing.id === host.id)) hosts.push(host);

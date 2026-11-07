@@ -52,6 +52,7 @@ export interface DeviceWorld {
   readonly devices: ReadonlyArray<DeviceSummary>;
   /** Labels of the SSH device hosts, by id. The local host always exists. */
   readonly deviceHosts?: Readonly<Record<string, string>> | undefined;
+  readonly deviceHostKinds?: Readonly<Record<string, "limrun">> | undefined;
   /**
    * agent-device sessions that prior turns started, by device id, with the app `open` put in
    * each. Otherwise a device's session starts at its launcher's first `open` in the sample.
@@ -623,7 +624,9 @@ const fakeHost = (
     summary: Effect.sync(() => ({
       id,
       label,
-      kind: id === LOCAL_DEVICE_HOST_ID ? ("local" as const) : ("ssh" as const),
+      kind:
+        world.deviceHostKinds?.[id] ??
+        (id === LOCAL_DEVICE_HOST_ID ? ("local" as const) : ("ssh" as const)),
       platforms: [availability("ios"), availability("android")],
       hubInstalled: true,
       agentDeviceInstalled: true,

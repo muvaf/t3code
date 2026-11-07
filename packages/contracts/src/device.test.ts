@@ -4,6 +4,8 @@ import {
   DeviceBootError,
   DeviceServiceState,
   EasDeviceHostConfig,
+  LimrunDeviceHostConfig,
+  LimrunDeviceHostConfigs,
   SimlockDeviceHostConfig,
   EasDeviceHostConfigs,
   SshDeviceHostConfigs,
@@ -48,9 +50,23 @@ describe("configured device hosts", () => {
     ).toThrow();
   });
 
+  it("bounds Limrun lifetime and concurrent devices and rejects duplicate host IDs", () => {
+    const decode = Schema.decodeUnknownSync(LimrunDeviceHostConfigs);
+    const host = { kind: "limrun", id: "cloud", label: "Cloud" };
+    expect(decode([host])[0]).toMatchObject({
+      maxSessionMinutes: 60,
+      maxConcurrentSessions: 2,
+      apiKey: "",
+    });
+    expect(() => decode([{ ...host, maxSessionMinutes: 0 }])).toThrow();
+    expect(() => decode([{ ...host, maxConcurrentSessions: 21 }])).toThrow();
+    expect(() => decode([host, host])).toThrow();
+  });
+
   it("marks the EAS access token as a secret setting", () => {
     expect(secretSettingsFields(EasDeviceHostConfig)).toEqual(["accessToken"]);
     expect(secretSettingsFields(SimlockDeviceHostConfig)).toEqual(["agentToken"]);
+    expect(secretSettingsFields(LimrunDeviceHostConfig)).toEqual(["apiKey"]);
   });
 });
 
@@ -66,6 +82,7 @@ describe("device state for clients from before EAS hosts", () => {
       { ...summary, id: "local", kind: "local" as const },
       { ...summary, id: "eas", kind: "eas" as const },
       { ...summary, id: "pool", kind: "simlock" as const },
+      { ...summary, id: "limrun", kind: "limrun" as const },
     ],
     hostStatus: "ready" as const,
     hostStatuses: {},

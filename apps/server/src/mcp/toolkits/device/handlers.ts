@@ -32,26 +32,36 @@ export function agentDeviceQuickStart(
   command = "agent-device",
   host?:
     | { readonly kind: "eas" }
-    | { readonly kind: "simlock"; readonly installDirectory?: string },
+    | { readonly kind: "simlock" | "limrun"; readonly installDirectory?: string },
 ): string {
   const executable = shellWord(command);
   const target = targetArgs.map(shellWord).join(" ");
   const run = (args: string) => [executable, args, target].filter(Boolean).join(" ");
   const platformNotes =
-    host?.kind === "simlock"
+    host?.kind === "limrun"
       ? [
-          "This device is leased from a Simlock pool (alpha in T3 Code). The lease returns it to the pool, wiped, when it ends, so call device_close with shutdown: true when you are done. It starts with no apps installed.",
+          `This is a T3-managed Limrun cloud ${device.platform === "ios" ? "simulator" : "emulator"}. Its instance ID is ${device.id}. Closing agent-device releases automation but leaves the device running; call device_close with shutdown: true when finished to stop billing.`,
+          "T3 does not sync source code or build apps. Use the Limrun Xcode or Gradle skill for remote builds and install the result onto this instance. Use the Limrun Expo development skill to connect Metro or other local services.",
           host.installDirectory
-            ? `agent-device accepts install for this lease only when run from ${host.installDirectory}.`
+            ? `Run install from ${shellWord(host.installDirectory)} so the attached lease can resolve local artifacts.`
             : "",
         ]
           .filter(Boolean)
           .join(" ")
-      : host?.kind === "eas"
-        ? "This is an EAS Simulator session in the cloud. It bills the Expo account per minute until it stops, so call device_close with shutdown: true when you are done. It starts with no apps installed: install-from-source <url> installs a build from a URL (iOS needs a .tar.gz containing a .app), and install uploads one from this machine."
-        : device.platform === "ios"
-          ? "First use builds an XCTest runner and can take a couple of minutes; later commands are fast."
-          : "The Android snapshot helper installs itself on first use.";
+      : host?.kind === "simlock"
+        ? [
+            "This device is leased from a Simlock pool (alpha in T3 Code). The lease returns it to the pool, wiped, when it ends, so call device_close with shutdown: true when you are done. It starts with no apps installed.",
+            host.installDirectory
+              ? `agent-device accepts install for this lease only when run from ${host.installDirectory}.`
+              : "",
+          ]
+            .filter(Boolean)
+            .join(" ")
+        : host?.kind === "eas"
+          ? "This is an EAS Simulator session in the cloud. It bills the Expo account per minute until it stops, so call device_close with shutdown: true when you are done. It starts with no apps installed: install-from-source <url> installs a build from a URL (iOS needs a .tar.gz containing a .app), and install uploads one from this machine."
+          : device.platform === "ios"
+            ? "First use builds an XCTest runner and can take a couple of minutes; later commands are fast."
+            : "The Android snapshot helper installs itself on first use.";
   return [
     `The user is watching ${device.name} (${device.version}) in the Device panel.`,
     target === ""
@@ -280,9 +290,9 @@ const handlers = {
           device,
           [],
           command,
-          hostKind === "simlock"
+          hostKind === "simlock" || hostKind === "limrun"
             ? {
-                kind: "simlock",
+                kind: hostKind,
                 ...(agent.installDirectory ? { installDirectory: agent.installDirectory } : {}),
               }
             : hostKind === "eas"

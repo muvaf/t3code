@@ -46,6 +46,7 @@ export function DeviceStreamWebView({
     platform: props.platform,
     deviceId: props.deviceId,
     ...(props.serveSimOnly ? { serveSimOnly: true } : {}),
+    ...(props.limrun ? { limrun: true } : {}),
     colors: props.colors,
   });
   return (

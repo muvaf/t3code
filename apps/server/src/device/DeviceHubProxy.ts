@@ -21,6 +21,7 @@ import * as DeviceService from "./DeviceService.ts";
 import { repeatStillFrame } from "./mjpegStillFrame.ts";
 
 const ALLOWED_PATHS: ReadonlyArray<RegExp> = [
+  /^\/limrun\/[^/]+\/screenshot$/,
   /^\/api\/devices$/,
   /^\/vendor\/serve-sim\/api$/,
   /^\/vendor\/serve-sim\/api\/screenshot$/,
@@ -45,6 +46,7 @@ const MUTABLE_PATHS: ReadonlyArray<RegExp> = [
 ];
 
 const ALLOWED_WS_PATHS: ReadonlyArray<RegExp> = [
+  /^\/limrun\/[^/]+\/ws$/,
   /^\/api\/devices\/ws$/,
   /^\/vendor\/serve-sim\/helper\/ws$/,
   /^\/vendor\/serve-emu\/ws$/,
@@ -212,6 +214,21 @@ const handler = Effect.gen(function* () {
   const upstreamSearch = new URLSearchParams(url.value.search);
   upstreamSearch.delete("wsTicket");
   upstreamSearch.delete("hostId");
+  if (
+    !upgrade &&
+    (request.method === "GET" || /\/api\/screenshot$/.test(hubPath)) &&
+    ready.readResponse
+  ) {
+    const result = yield* ready.readResponse(hubPath, upstreamSearch).pipe(Effect.result);
+    if (result._tag === "Failure")
+      return HttpServerResponse.text("Device request failed", { status: 503 });
+    const response = result.success;
+    if (response)
+      return HttpServerResponse.uint8Array(response.body, {
+        contentType: response.contentType,
+        headers: { "cache-control": "no-store" },
+      });
+  }
   const search = upstreamSearch.size > 0 ? `?${upstreamSearch.toString()}` : "";
   // Hosts with several upstreams (one per cloud session) route and authenticate requests themselves.
   const routed = ready.upstream ? yield* ready.upstream(hubPath, upstreamSearch) : undefined;
