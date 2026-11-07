@@ -86,9 +86,15 @@ it("queues early ICE candidates, isolates signaling sessions, and stops pending 
     }
   }
   const peers: FakePeer[] = [];
+  const setCodecPreferences = vi.fn();
+  const codecs = ["VP8", "H264", "H265", "VP9", "rtx"].map((name) => ({
+    mimeType: `video/${name}`,
+    clockRate: 90000,
+  }));
+  vi.stubGlobal("RTCRtpReceiver", { getCapabilities: () => ({ codecs }) });
   class FakePeer {
     remoteDescription: unknown = null;
-    addTransceiver = vi.fn();
+    addTransceiver = vi.fn(() => ({ setCodecPreferences }));
     createDataChannel = vi.fn(() => ({ close: vi.fn(), readyState: "open" }));
     createOffer = vi.fn(async () => ({ type: "offer", sdp: "local-sdp" }));
     setLocalDescription = vi.fn(async () => {});
@@ -114,6 +120,16 @@ it("queues early ICE candidates, isolates signaling sessions, and stops pending 
   socket.message({ type: "candidate", candidate: "early", sdpMid: "0", sdpMLineIndex: 0 });
   socket.message({ type: "rtcConfiguration", rtcConfiguration: { iceServers: [] } });
   await vi.advanceTimersByTimeAsync(0);
+  expect(setCodecPreferences).toHaveBeenCalledWith([
+    codecs[3],
+    codecs[2],
+    codecs[1],
+    codecs[0],
+    codecs[4],
+  ]);
+  expect(peers[0]!.createOffer.mock.invocationCallOrder[0]).toBeGreaterThan(
+    setCodecPreferences.mock.invocationCallOrder[0]!,
+  );
   expect(peers[0]!.addIceCandidate).not.toHaveBeenCalled();
   socket.message({ type: "answer", sdp: "remote-sdp" });
   await vi.advanceTimersByTimeAsync(0);
