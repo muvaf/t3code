@@ -307,3 +307,4 @@ minimumReleaseAgeExclude:
   - "@effect/tsgo-win32-arm64@0.67.1"
   - "@effect/tsgo-win32-x64@0.67.1"
   - "@effect/tsgo@0.67.1"
+  - "@limrun/ui@0.20.0"
