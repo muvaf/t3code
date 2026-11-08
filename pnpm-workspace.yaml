@@ -10,8 +10,8 @@ packages:
 # true = allowed to run build scripts; false mirrors the pnpm 10 behavior
 # where anything outside onlyBuiltDependencies was silently not built.
 allowBuilds:
-  # Build the shared Duo helpers from the pinned SDK commit.
-  "@limrun/ui@https://codeload.github.com/limrun-inc/typescript-sdk/tar.gz/45c91fedd2faf46b680074431f3114283d8127c5#path:/packages/ui": true
+  # Build the streaming core from the pinned SDK main commit.
+  "@limrun/ui@https://codeload.github.com/limrun-inc/typescript-sdk/tar.gz/291b64321d12e7f8e5e01c9d3a31d370add18937#path:/packages/ui": true
   browser-tabs-lock: false
   bufferutil: false
   core-js: false
@@ -309,4 +309,3 @@ minimumReleaseAgeExclude:
   - "@effect/tsgo-win32-arm64@0.67.1"
   - "@effect/tsgo-win32-x64@0.67.1"
   - "@effect/tsgo@0.67.1"
-  - "@limrun/ui@0.20.0"

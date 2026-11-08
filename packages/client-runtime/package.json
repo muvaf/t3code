@@ -545,7 +545,7 @@
     "test": "vp test run"
   },
   "dependencies": {
-    "@limrun/ui": "github:limrun-inc/typescript-sdk#45c91fedd2faf46b680074431f3114283d8127c5&path:/packages/ui",
+    "@limrun/ui": "github:limrun-inc/typescript-sdk#291b64321d12e7f8e5e01c9d3a31d370add18937&path:/packages/ui",
     "@pierre/diffs": "catalog:",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/provider-acp-registry": "workspace:*",

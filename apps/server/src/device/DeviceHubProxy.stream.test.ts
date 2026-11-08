@@ -10,6 +10,7 @@ import * as Socket from "effect/socket/Socket";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
   AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
   AuthSessionId,
   LOCAL_DEVICE_HOST_ID,
 } from "@t3tools/contracts";
@@ -17,7 +18,11 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as DeviceService from "./DeviceService.ts";
 import * as DeviceHubProxy from "./DeviceHubProxy.ts";
 
-it.effect("preserves binary input and admission frames through the real socket proxy", () =>
+it.effect.each([
+  { path: "/vendor/serve-sim/helper/ws", scope: AuthOrchestrationOperateScope, token: undefined },
+  { path: "/limrun/ios_owned/watch", scope: AuthOrchestrationReadScope, token: "watch-token" },
+  { path: "/limrun/android_owned/watch", scope: AuthOrchestrationReadScope, token: "watch-token" },
+])("preserves frames and upstream credentials through $path", ({ path, scope, token }) =>
   Effect.gen(function* () {
     const hub = yield* Effect.acquireRelease(
       Effect.sync(() => new NodeWS.WebSocketServer({ port: 0 })),
@@ -34,7 +39,9 @@ it.effect("preserves binary input and admission frames through the real socket p
       yield* Effect.promise(() => new Promise<void>((resolve) => hub.once("listening", resolve)));
     const address = hub.address();
     if (typeof address !== "object" || !address) throw new Error("Missing hub port");
-    hub.on("connection", (socket) => {
+    const upstreamHeaders: Array<string | undefined> = [];
+    hub.on("connection", (socket, request) => {
+      upstreamHeaders.push(request.headers.authorization);
       socket.send(Uint8Array.of(0x83));
       socket.on("message", (data, binary) => socket.send(data, { binary }));
     });
@@ -48,7 +55,7 @@ it.effect("preserves binary input and admission frames through the real socket p
                 sessionId: AuthSessionId.make("test"),
                 subject: "test",
                 method: "bearer-access-token",
-                scopes: [AuthOrchestrationOperateScope],
+                scopes: [scope],
               }),
           } as unknown as EnvironmentAuth.EnvironmentAuth["Service"]),
         ),
@@ -58,8 +65,20 @@ it.effect("preserves binary input and admission frames through the real socket p
               Effect.succeed({
                 hostId: LOCAL_DEVICE_HOST_ID,
                 hub: { origin: `http://127.0.0.1:${address.port}` },
+                ...(token
+                  ? {
+                      upstream: (_path: string, search: URLSearchParams) => {
+                        expect(search.has("wsTicket")).toBe(false);
+                        return Effect.succeed({
+                          url: `ws://127.0.0.1:${address.port}/stream`,
+                          headers: { authorization: `Bearer ${token}` },
+                          protocols: [],
+                        });
+                      },
+                    }
+                  : {}),
               }),
-          } as DeviceService.DeviceService["Service"]),
+          } as unknown as DeviceService.DeviceService["Service"]),
         ),
       ),
     );
@@ -67,12 +86,7 @@ it.effect("preserves binary input and admission frames through the real socket p
       Context.get(services, HttpServer.HttpServer).address,
     ).replace(/^http/, "ws");
     const client = yield* Effect.acquireRelease(
-      Effect.sync(
-        () =>
-          new WebSocket(
-            `${origin}/api/device-hub/vendor/serve-sim/helper/ws?device=test&wsTicket=test`,
-          ),
-      ),
+      Effect.sync(() => new WebSocket(`${origin}/api/device-hub${path}?device=test&wsTicket=test`)),
       (socket) => Effect.sync(() => socket.close()),
     );
     client.binaryType = "arraybuffer";
@@ -88,6 +102,7 @@ it.effect("preserves binary input and admission frames through the real socket p
     });
     yield* Effect.promise(() => received.promise);
     expect(frames).toEqual([[0x83], [0x03, 1], [0x03, 2]]);
+    expect(upstreamHeaders).toEqual([token ? `Bearer ${token}` : undefined]);
   }),
 );
 

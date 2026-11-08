@@ -525,14 +525,13 @@ export const make = Effect.fn("LimrunDeviceHost.make")(function* (
             run,
             readResponse: Effect.fn("LimrunDeviceHost.readResponse")(
               function* (route, search) {
-                const match = /^\/limrun\/([^/]+)\/screenshot$/.exec(route);
                 const helper = /^\/vendor\/serve-sim\/helper\/([^/]+)\/(ax|foreground)$/.exec(
                   route,
                 );
-                const id = match?.[1] ?? helper?.[1] ?? search.get("device");
+                const id = helper?.[1] ?? search.get("device");
                 const item = id ? live.get(id) : undefined;
                 if (!item) return null;
-                if (match || route.endsWith("/api/screenshot"))
+                if (route.endsWith("/api/screenshot"))
                   return { body: yield* devices.screenshot(item.device), contentType: "image/png" };
                 const connected = yield* runtime(item);
                 const json = (value: unknown) =>
@@ -567,18 +566,28 @@ export const make = Effect.fn("LimrunDeviceHost.make")(function* (
               Effect.mapError(failed("read device")),
             ),
             helpers: { serveSimAxSettings: null, serveSimCli: null },
-            upstream: (route) =>
-              Effect.sync(() => {
-                const match = /^\/limrun\/([^/]+)\/ws$/.exec(route);
-                const item = match ? live.get(match[1]!) : undefined;
-                return item?.instance.status.endpointWebSocketUrl && item.instance.status.token
-                  ? {
-                      url: item.instance.status.endpointWebSocketUrl,
-                      headers: { authorization: `Bearer ${item.instance.status.token}` },
-                      protocols: [],
-                    }
-                  : null;
-              }),
+            upstream: Effect.fn("LimrunDeviceHost.upstream")(function* (route) {
+              const match = /^\/limrun\/([^/]+)\/(ws|watch)$/.exec(route);
+              const item = match ? live.get(match[1]!) : undefined;
+              if (!item?.instance.status.endpointWebSocketUrl || !item.instance.status.token)
+                return null;
+              const token =
+                match![2] === "watch"
+                  ? yield* api.watchToken(item.key, item.platform, item.instance.metadata.id).pipe(
+                      Effect.catch(() =>
+                        Effect.logWarning("Could not authorize Limrun preview", {
+                          deviceId: item.instance.metadata.id,
+                        }).pipe(Effect.as(null)),
+                      ),
+                    )
+                  : item.instance.status.token;
+              if (!token) return null;
+              return {
+                url: item.instance.status.endpointWebSocketUrl,
+                headers: { authorization: `Bearer ${token}` },
+                protocols: [],
+              };
+            }),
           };
           return ready;
         }),

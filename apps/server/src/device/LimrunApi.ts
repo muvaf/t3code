@@ -68,6 +68,11 @@ export class LimrunApi extends Context.Service<
       platform: DevicePlatform,
       id: string,
     ) => Effect.Effect<void, LimrunRequestError>;
+    readonly watchToken: (
+      key: string,
+      platform: DevicePlatform,
+      id: string,
+    ) => Effect.Effect<string, LimrunRequestError>;
     readonly connect: (
       instance: Instance,
       platform: DevicePlatform,
@@ -138,6 +143,15 @@ export const layer = Layer.succeed(
           LimrunRequestError: (error) => (error.status === 404 ? Effect.void : Effect.fail(error)),
         }),
       ),
+    ),
+    watchToken: Effect.fn("LimrunApi.watchToken")((key, platform, id) =>
+      request("watch token", async (signal) => {
+        const result = await client(key).accessTokens.create(
+          { permissions: [`${platform}:${id}:watch`], ttlSeconds: 300 },
+          { signal },
+        );
+        return result.token;
+      }),
     ),
     connect: Effect.fn("LimrunApi.connect")((instance, platform) =>
       request("connect", async () => {
