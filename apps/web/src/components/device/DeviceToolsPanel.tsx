@@ -80,8 +80,6 @@ export function DeviceToolsPanel(props: {
   readonly controls: DeviceControls;
   readonly hostDiagnostics: string | undefined;
   readonly device: DeviceSummary;
-  readonly supportsLocation?: boolean;
-  readonly supportsOrientation?: boolean;
   readonly access: DeviceHubAccess | null;
   readonly axOverlay: boolean;
   readonly onAxOverlayChange: (enabled: boolean) => void;
@@ -226,7 +224,7 @@ export function DeviceToolsPanel(props: {
                 value={null}
                 placeholder="Rotate to…"
                 options={ORIENTATIONS}
-                disabled={disabled || props.supportsOrientation === false}
+                disabled={disabled}
                 onChange={(value) => act({ type: "setOrientation", value })}
               />
             </Row>
@@ -289,7 +287,7 @@ export function DeviceToolsPanel(props: {
         </Section>
 
         <LocationSection
-          disabled={disabled || props.supportsLocation === false}
+          disabled={disabled}
           canClear={isIos}
           onSet={(latitude, longitude) => act({ type: "setLocation", latitude, longitude })}
           onClear={() => act({ type: "clearLocation" })}

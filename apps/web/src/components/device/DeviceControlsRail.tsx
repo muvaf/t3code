@@ -88,16 +88,7 @@ export function DeviceControlsRail(props: {
             >
               <Square />
             </RailButton>
-            {props.hostKind === "limrun" ? (
-              <RailButton
-                tooltipSide={popupSide}
-                label="Rotate device"
-                disabled={inputDisabled}
-                onClick={() => handle?.rotate()}
-              >
-                <RotateCcw />
-              </RailButton>
-            ) : runsHostCommands ? (
+            {runsHostCommands ? (
               <Menu>
                 <MenuTrigger
                   render={

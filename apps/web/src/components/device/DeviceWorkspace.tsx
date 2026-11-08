@@ -118,8 +118,6 @@ export function DeviceWorkspace(props: {
           device={props.device}
           controls={controls}
           hostDiagnostics={props.hostDiagnostics}
-          supportsLocation={props.hostKind !== "limrun" || props.device.platform === "ios"}
-          supportsOrientation={props.hostKind !== "limrun"}
           access={access}
           axOverlay={axOverlay}
           onAxOverlayChange={setAxOverlay}
