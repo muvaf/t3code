@@ -5,7 +5,7 @@ import {
   type DeviceHostSummary,
   type LimrunDeviceHostConfig,
 } from "@t3tools/contracts";
-import type { DeviceHostSession } from "@limrun/api/serve-sim-host";
+import { deviceHostCatalog, type DeviceHostSession } from "@limrun/api/serve-sim-host";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -21,48 +21,15 @@ import * as DeviceHost from "./DeviceHost.ts";
 import * as LimrunApi from "./LimrunApi.ts";
 import type { AgentDeviceCli } from "./SimlockDeviceHost.ts";
 
-const catalog: ReadonlyArray<DeviceHost.HostDevice> = [
-  {
-    id: "limrun:ios:iphone",
-    platform: "ios",
-    name: "iPhone",
-    version: "iOS",
-    booted: false,
-    physical: false,
-  },
-  {
-    id: "limrun:ios:ipad",
-    platform: "ios",
-    name: "iPad",
-    version: "iOS",
-    booted: false,
-    physical: false,
-  },
-  {
-    id: "limrun:android:phone",
-    platform: "android",
-    name: "Android phone",
-    version: "Android",
-    booted: false,
-    physical: false,
-  },
-  {
-    id: "limrun:android:tablet",
-    platform: "android",
-    name: "Android tablet",
-    version: "Android",
-    booted: false,
-    physical: false,
-  },
-  {
-    id: "limrun:ios:iphone-duo",
-    platform: "ios",
-    name: "iPhone Duo",
-    version: "iOS",
-    booted: false,
-    physical: false,
-  },
-];
+const catalog = deviceHostCatalog.map((target) => ({
+  id: `limrun:${target.platform}:${target.model}`,
+  platform: target.platform,
+  name: target.name,
+  version: target.platform === "ios" ? "iOS" : "Android",
+  booted: false,
+  physical: false,
+  target,
+}));
 
 interface Running {
   session: DeviceHostSession;
@@ -216,14 +183,8 @@ export const make = Effect.fn("LimrunDeviceHost.make")(function* (
                 "This Limrun instance has ended. Open a new device from the list.",
               );
             const host = yield* initialize;
-            const model = template.id.split(":")[2]!;
             const session = yield* LimrunApi.request("create", (signal) =>
-              host.open(
-                template.platform === "ios"
-                  ? { platform: "ios", model: model as "iphone" | "ipad" | "iphone-duo" }
-                  : { platform: "android", model: model as "phone" | "tablet" },
-                signal,
-              ),
+              host.open(template.target, signal),
             );
             const dir = path.join(directory, session.slot);
             const cwd = context?.workspaceRoot ?? directory;
@@ -306,11 +267,8 @@ export const make = Effect.fn("LimrunDeviceHost.make")(function* (
   const run: DeviceHost.DeviceHostReady["run"] = Effect.fn("LimrunDeviceHost.run")(
     (command, args, options) =>
       Effect.gen(function* () {
-        const id = command === "xcrun" ? args[2] : args[1];
-        if (!hub || !id) return { stdout: "", stderr: "Limrun instance not found", code: 1 };
-        return yield* LimrunApi.request("device command", () =>
-          hub!.run(id, command, args, options),
-        );
+        if (!hub) return { stdout: "", stderr: "Limrun host is not ready", code: 1 };
+        return yield* LimrunApi.request("device command", () => hub!.run(command, args, options));
       }).pipe(
         Effect.timeout(`${options?.timeoutMs ?? 30000} millis`),
         Effect.orElseSucceed(() => ({ stdout: "", stderr: "Limrun command failed", code: 1 })),

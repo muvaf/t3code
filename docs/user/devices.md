@@ -157,13 +157,13 @@ skills to build your app, install it onto the instance ID returned by
 `device_open`, and connect development servers. Source syncing is handled by
 those build tools. Closing the agent-device session does not delete the instance.
 
-Use the toolbar to rotate Limrun devices; the Android orientation presets in
-the Tools drawer are disabled. Some local tools remain unavailable: Android
-GPS coordinates, iOS
-foreground-app tracking in the Tools drawer, notification permission changes,
-and iOS accessibility preferences that need the local serve-sim helper. Unknown
-preferences are disabled. Agent-device provides its supported app inspection,
-recording, logging, and device actions through the returned launcher.
+Use the toolbar to rotate Limrun devices. For Android, use **Orientation** and
+**Location preset** in the Tools drawer to test rotation and GPS locations.
+Some local tools remain unavailable: iOS foreground-app tracking in the Tools
+drawer, notification permission changes, and iOS accessibility preferences that
+need the local serve-sim helper. Unknown preferences are disabled. Agent-device
+provides its supported app inspection, recording, logging, and device actions
+through the returned launcher.
 
 ## Simlock hosts (alpha)
 
