@@ -5,9 +5,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { HttpClient } from "effect/http";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as ProcessRunner from "../processRunner.ts";
 import * as DeviceHost from "./DeviceHost.ts";
+
+const isDeviceHostError = Schema.is(DeviceHost.DeviceHostError);
 
 const DAEMON_READY_TIMEOUT_MS = 30_000;
 const DAEMON_POLL_MS = 100;
@@ -19,6 +21,26 @@ const AgentDeviceDaemonFile = Schema.Struct({
   version: Schema.optional(Schema.String),
 });
 const decodeDaemonFile = Schema.decodeUnknownEffect(Schema.fromJsonString(AgentDeviceDaemonFile));
+const decodeConnection = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      session: Schema.String,
+      tenant: Schema.String,
+      runId: Schema.String,
+      leaseId: Schema.String,
+      leaseBackend: Schema.String,
+      leaseProvider: Schema.optionalKey(Schema.String),
+      deviceKey: Schema.optionalKey(Schema.String),
+      clientId: Schema.optionalKey(Schema.String),
+    }),
+  ),
+);
+const HeartbeatResult = Schema.Struct({
+  result: Schema.Struct({
+    ok: Schema.Literal(true),
+    data: Schema.Struct({ lease: Schema.Struct({ leaseId: Schema.String }) }),
+  }),
+});
 
 const decodeAgentDeviceFailure = Schema.decodeUnknownOption(
   Schema.fromJsonString(
@@ -190,5 +212,52 @@ export const make = Effect.fn("AgentDeviceDaemon.make")(function* (options: {
         cause: result,
       });
   });
-  return { read, start, run, stop };
+  const heartbeat = Effect.fn("AgentDeviceDaemon.heartbeat")(
+    function* (endpoint: DeviceHost.AgentDaemonEndpoint) {
+      const session = options.session;
+      if (!session || !/^[a-zA-Z0-9._-]+$/.test(session))
+        return yield* new DeviceHost.DeviceHostError({
+          hostId,
+          step: "renewing agent lease",
+          cause: "A filesystem-safe agent session is required",
+        });
+      // The CLI may replace an expired lease; renew the current binding instead of a cached lease ID.
+      const connection = yield* fs
+        .readFileString(path.join(stateDir, "remote-connections", `${session}.json`))
+        .pipe(Effect.flatMap(decodeConnection));
+      if (connection.session !== session)
+        return yield* new DeviceHost.DeviceHostError({
+          hostId,
+          step: "renewing agent lease",
+          cause: "Agent session binding mismatch",
+        });
+      const { tenant, leaseBackend, ...scope } = connection;
+      const response = yield* HttpClientRequest.post(`${endpoint.baseUrl}/rpc`).pipe(
+        HttpClientRequest.bearerToken(endpoint.token),
+        HttpClientRequest.bodyJson({
+          jsonrpc: "2.0",
+          id: session,
+          method: "agent_device.lease.heartbeat",
+          params: { ...scope, tenantId: tenant, backend: leaseBackend },
+        }),
+        Effect.flatMap((request) => httpClient.pipe(HttpClient.withScope).execute(request)),
+        Effect.flatMap(HttpClientResponse.filterStatusOk),
+        Effect.flatMap(HttpClientResponse.schemaBodyJson(HeartbeatResult)),
+      );
+      if (response.result.data.lease.leaseId !== connection.leaseId)
+        return yield* new DeviceHost.DeviceHostError({
+          hostId,
+          step: "renewing agent lease",
+          cause: "Agent lease heartbeat mismatch",
+        });
+    },
+    Effect.scoped,
+    Effect.timeout("15 seconds"),
+    Effect.mapError((cause) =>
+      isDeviceHostError(cause)
+        ? cause
+        : new DeviceHost.DeviceHostError({ hostId, step: "renewing agent lease", cause }),
+    ),
+  );
+  return { read, start, run, stop, heartbeat };
 });

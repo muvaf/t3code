@@ -252,7 +252,7 @@ export const make = Effect.fn("LimrunDeviceHost.make")(function* (
                 while (true) {
                   yield* Effect.sleep("30 seconds");
                   if (item.endpoint)
-                    yield* agent(item, ["boot", "--platform", item.platform]).pipe(
+                    yield* item.daemon.heartbeat(item.endpoint).pipe(
                       Effect.tapError(() =>
                         Effect.logWarning("Could not renew Limrun automation session", {
                           deviceId: session.id,

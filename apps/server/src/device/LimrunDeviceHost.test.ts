@@ -7,6 +7,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Scope from "effect/Scope";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as TestClock from "effect/testing/TestClock";
+import * as Queue from "effect/Queue";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
@@ -37,6 +39,12 @@ const fixture = Effect.gen(function* () {
   const connections = new Set<string>();
   const sessions = new Map<string, DeviceHostSession>();
   const daemonHealthy = yield* Ref.make(true);
+  const heartbeatFails = yield* Ref.make(false);
+  const heartbeatRequests = yield* Queue.unbounded<void>();
+  const heartbeats: Array<{
+    authorization: string | undefined;
+    body: { method: string; params: Record<string, unknown> };
+  }> = [];
   let sequence = 0;
   const api = LimrunApi.LimrunApi.of({
     createHost: (key, options) => {
@@ -104,6 +112,23 @@ const fixture = Effect.gen(function* () {
             `${directory}/daemon.json`,
             JSON.stringify({ httpPort: 4500 + commands.length, token: "daemon-token" }),
           );
+        if (input.args[1] === "boot") {
+          const session = input.args[input.args.indexOf("--session") + 1]!;
+          yield* fs.makeDirectory(`${directory}/remote-connections`, { recursive: true });
+          yield* fs.writeFileString(
+            `${directory}/remote-connections/${session}.json`,
+            JSON.stringify({
+              session,
+              tenant: "limrun",
+              runId: "run-1",
+              leaseId: "a".repeat(32),
+              leaseBackend: "ios-simulator",
+              leaseProvider: "limrun",
+              deviceKey: "ios:simulator:device-1",
+              clientId: "client-1",
+            }),
+          );
+        }
         return {
           stdout: staleConnection
             ? '{"error":{"code":"INVALID_ARGS","message":"A different remote connection is already active for this session."}}'
@@ -129,14 +154,29 @@ const fixture = Effect.gen(function* () {
     Effect.provideService(
       HttpClient.HttpClient,
       HttpClient.make((request) =>
-        Ref.get(daemonHealthy).pipe(
-          Effect.map((healthy) =>
-            HttpClientResponse.fromWeb(
-              request,
-              new Response("ok", { status: healthy ? 200 : 503 }),
-            ),
-          ),
-        ),
+        Effect.gen(function* () {
+          if (request.url.endsWith("/rpc")) {
+            if (request.body._tag !== "Uint8Array")
+              return yield* Effect.die("Expected JSON request");
+            const body = JSON.parse(new TextDecoder().decode(request.body.body)) as {
+              method: string;
+              params: Record<string, unknown>;
+            };
+            heartbeats.push({ authorization: request.headers.authorization, body });
+            const payload = (yield* Ref.get(heartbeatFails))
+              ? { error: { code: -32000, message: "Lease expired" } }
+              : { result: { ok: true, data: { lease: { leaseId: String(body.params.leaseId) } } } };
+            yield* Queue.offer(heartbeatRequests, undefined);
+            return {
+              ...HttpClientResponse.fromWeb(request, Response.json(payload)),
+              json: Effect.succeed(payload),
+            };
+          }
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response("ok", { status: (yield* Ref.get(daemonHealthy)) ? 200 : 503 }),
+          );
+        }),
       ),
     ),
     Effect.provideService(Scope.Scope, scope),
@@ -152,10 +192,70 @@ const fixture = Effect.gen(function* () {
     }),
   );
   const ready = yield* host.ensureReady(() => Effect.void);
-  return { host, ready, removed, commands, sessions, daemonHealthy };
+  return {
+    host,
+    ready,
+    removed,
+    commands,
+    sessions,
+    daemonHealthy,
+    heartbeats,
+    heartbeatFails,
+    heartbeatRequests,
+  };
 });
 
 describe("Limrun host binding", () => {
+  it.effect("renews the current lease over authenticated HTTP without spawning commands", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const fs = yield* FileSystem.FileSystem;
+      const device = (yield* f.ready.devices.list).devices.find((item) => item.platform === "ios")!;
+      const id = yield* f.ready.devices.boot(device);
+      yield* TestClock.adjust("30 seconds");
+      expect(f.heartbeats).toEqual([]);
+      const endpoint = yield* f.ready.devices.agentEndpoint!(id);
+      const commandCount = f.commands.length;
+      yield* TestClock.adjust("30 seconds");
+      yield* Queue.take(f.heartbeatRequests);
+      expect(f.heartbeats).toEqual([
+        {
+          authorization: "Bearer daemon-token",
+          body: expect.objectContaining({
+            method: "agent_device.lease.heartbeat",
+            params: {
+              session: endpoint.session,
+              tenantId: "limrun",
+              runId: "run-1",
+              leaseId: "a".repeat(32),
+              backend: "ios-simulator",
+              leaseProvider: "limrun",
+              deviceKey: "ios:simulator:device-1",
+              clientId: "client-1",
+            },
+          }),
+        },
+      ]);
+      const file = `${endpoint.stateDir}/remote-connections/${endpoint.session}.json`;
+      const original = yield* fs.readFileString(file);
+      yield* fs.writeFileString(file, original.replace("a".repeat(32), "b".repeat(32)));
+      yield* Ref.set(f.heartbeatFails, true);
+      yield* TestClock.adjust("30 seconds");
+      yield* Queue.take(f.heartbeatRequests);
+      yield* Ref.set(f.heartbeatFails, false);
+      yield* TestClock.adjust("30 seconds");
+      yield* Queue.take(f.heartbeatRequests);
+      expect(f.heartbeats).toHaveLength(3);
+      expect(f.heartbeats.at(-1)?.body.params.leaseId).toBe("b".repeat(32));
+      expect(f.commands).toHaveLength(commandCount);
+      yield* f.host.stopAgent;
+      yield* TestClock.adjust("30 seconds");
+      expect(f.heartbeats).toHaveLength(3);
+      yield* f.ready.devices.shutdown({ id, platform: "ios" });
+      yield* TestClock.adjust("30 seconds");
+      expect(f.heartbeats).toHaveLength(3);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
   it.effect(
     "rebinds the Limrun session after the shared manager replaces an unhealthy daemon",
     () =>
