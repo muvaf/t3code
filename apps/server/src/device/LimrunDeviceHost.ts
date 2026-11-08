@@ -161,7 +161,8 @@ export const make = Effect.fn("LimrunDeviceHost.make")(function* (
     const daemon = yield* item.daemon.start(cli);
     if (item.endpoint?.baseUrl === daemon.baseUrl && item.endpoint.token === daemon.token)
       return item.endpoint;
-    yield* agent(item, ["connect", "limrun", "--platform", item.platform]);
+    // This instance owns its state directory; replace the persisted binding after a daemon restart.
+    yield* agent(item, ["connect", "limrun", "--platform", item.platform, "--force"]);
     yield* agent(item, ["boot", "--platform", item.platform]);
     item.endpoint = {
       baseUrl: daemon.baseUrl,

@@ -34,6 +34,7 @@ const fixture = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const removed: string[] = [];
   const commands: Array<ProcessRunner.ProcessRunInput> = [];
+  const connections = new Set<string>();
   const sessions = new Map<string, DeviceHostSession>();
   const daemonHealthy = yield* Ref.make(true);
   let sequence = 0;
@@ -93,15 +94,22 @@ const fixture = Effect.gen(function* () {
       Effect.gen(function* () {
         commands.push(input);
         const directory = input.env!.AGENT_DEVICE_STATE_DIR!;
+        const staleConnection =
+          input.args[1] === "connect" &&
+          connections.has(directory) &&
+          !input.args.includes("--force");
+        if (input.args[1] === "connect") connections.add(directory);
         if (input.args[1] === "devices")
           yield* fs.writeFileString(
             `${directory}/daemon.json`,
             JSON.stringify({ httpPort: 4500 + commands.length, token: "daemon-token" }),
           );
         return {
-          stdout: "{}",
+          stdout: staleConnection
+            ? '{"error":{"code":"INVALID_ARGS","message":"A different remote connection is already active for this session."}}'
+            : "{}",
           stderr: "",
-          code: ChildProcessSpawner.ExitCode(0),
+          code: ChildProcessSpawner.ExitCode(staleConnection ? 1 : 0),
           timedOut: false,
           stdoutTruncated: false,
           stderrTruncated: false,
