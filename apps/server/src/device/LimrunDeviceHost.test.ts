@@ -33,6 +33,8 @@ const fixture = Effect.gen(function* () {
   const commands: Array<ProcessRunner.ProcessRunInput> = [];
   const records = new Map<string, LimrunApi.Instance>();
   const createdModels: string[] = [];
+  const watchRequests: Array<{ key: string; platform: string; id: string }> = [];
+  let refuseWatch = false;
   let sequence = 0;
   let activeDisplays = ["outer", "inner"];
   let refuseDelete = false;
@@ -71,6 +73,19 @@ const fixture = Effect.gen(function* () {
             cause: "response lost",
           });
         return instance;
+      }),
+    watchToken: (key, platform, id) =>
+      Effect.suspend(() => {
+        watchRequests.push({ key, platform, id });
+        return refuseWatch
+          ? Effect.fail(
+              new LimrunApi.LimrunRequestError({
+                operation: "watch token",
+                status: 403,
+                cause: "denied",
+              }),
+            )
+          : Effect.succeed(`watch-${id}`);
       }),
     list: () => Effect.succeed([]),
     get: (_key, _platform, id) => Effect.succeed(records.get(id)!),
@@ -160,6 +175,10 @@ const fixture = Effect.gen(function* () {
     commands,
     records,
     createdModels,
+    watchRequests,
+    refuseWatch: () => {
+      refuseWatch = true;
+    },
     setActiveDisplays: (displays: string[]) => {
       activeDisplays = displays;
     },
@@ -173,6 +192,43 @@ const fixture = Effect.gen(function* () {
 });
 
 describe("Limrun device ownership", () => {
+  it.effect(
+    "uses watch credentials only for previews and fails closed when minting is denied",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        for (const platform of ["ios", "android"] as const) {
+          const device = (yield* f.ready.devices.list).devices.find(
+            (d) => d.platform === platform,
+          )!;
+          const id = yield* f.ready.devices.boot(device);
+          const upstream = yield* f.ready.upstream!(
+            `/limrun/${id}/watch`,
+            new URLSearchParams("token=interactive&watchOnly=false"),
+          );
+          expect(upstream).toEqual({
+            url: `wss://region.test/v1/${id}/stream`,
+            headers: { authorization: `Bearer watch-${id}` },
+            protocols: [],
+          });
+          expect(f.watchRequests.at(-1)).toEqual({ key: "organization-key", platform, id });
+          expect(
+            yield* f.ready.upstream!("/limrun/not-owned/watch", new URLSearchParams()),
+          ).toBeNull();
+          expect(f.watchRequests).toHaveLength(platform === "ios" ? 1 : 2);
+          yield* f.ready.devices.shutdown({ id, platform });
+        }
+        const device = (yield* f.ready.devices.list).devices[0]!;
+        const id = yield* f.ready.devices.boot(device);
+        f.refuseWatch();
+        expect(yield* f.ready.upstream!(`/limrun/${id}/watch`, new URLSearchParams())).toBeNull();
+        expect(
+          (yield* f.ready.upstream!(`/limrun/${id}/ws`, new URLSearchParams()))?.headers
+            .authorization,
+        ).toBe(`Bearer token-${id}`);
+      }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
   it.effect("isolates attached agent credentials and proxies only owned instances", () =>
     Effect.gen(function* () {
       const f = yield* fixture;

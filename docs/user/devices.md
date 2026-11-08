@@ -148,7 +148,7 @@ next lists or opens Limrun devices. Other applications' instances are left alone
 
 Video, touch, keyboard input, screenshots, accessibility overlays, and basic
 device tools work in web, desktop, and mobile viewers. Read-only viewers receive
-periodic screenshots without a control connection. Limrun video uses WebRTC;
+live video without device input or camera/microphone forwarding. Limrun video uses WebRTC;
 the browser needs network access to the media candidates supplied by Limrun,
 in addition to its connection to the T3 server.
 

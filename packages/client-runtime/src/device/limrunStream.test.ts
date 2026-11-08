@@ -182,57 +182,46 @@ it("preserves typed text, keyboard modifiers, and the app switcher command", () 
   expect(sdk.sendText).toHaveBeenCalledTimes(1);
 });
 
-it("never opens a control socket for a read-only viewer and renews rejected credentials", async () => {
-  vi.useFakeTimers();
-  const socket = vi.fn();
-  const fetch = vi.fn(
-    async (_url: string, _options: RequestInit) => new Response(null, { status: 401 }),
-  );
-  vi.stubGlobal("WebSocket", socket);
-  vi.stubGlobal("fetch", fetch);
-  const observed = events();
-  const client = createLimrunDeviceStreamClient(
-    { access, platform: "ios", deviceId: "ios_owned", videoOnly: true },
-    { present: () => true },
-    observed,
-  );
-  client.start();
-  client.sendText("forbidden");
-  await vi.advanceTimersByTimeAsync(0);
-  expect(fetch.mock.calls[0]?.[0]).toContain("/limrun/ios_owned/screenshot");
-  expect(socket).not.toHaveBeenCalled();
-  expect(createDeviceStream).not.toHaveBeenCalled();
-  expect(observed.onUnauthorized).toHaveBeenCalledOnce();
-  client.stop();
-  expect(vi.getTimerCount()).toBe(0);
-});
-
-it("closes a read-only frame that finishes decoding after stop", async () => {
-  vi.useFakeTimers();
-  const decoded = Promise.withResolvers<ImageBitmap>();
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => new Response(new Blob())),
-  );
-  const decode = vi.fn(() => decoded.promise);
-  vi.stubGlobal("createImageBitmap", decode);
-  const sink = { present: vi.fn(() => true) };
-  const client = createLimrunDeviceStreamClient(
-    { access, platform: "ios", deviceId: "ios_owned", videoOnly: true },
-    sink,
-    events(),
-  );
-  client.start();
-  await vi.advanceTimersByTimeAsync(0);
-  expect(decode).toHaveBeenCalledOnce();
-  client.stop();
-  const close = vi.fn();
-  decoded.resolve({ width: 390, height: 844, close } as unknown as ImageBitmap);
-  await vi.advanceTimersByTimeAsync(0);
-  expect(close).toHaveBeenCalledOnce();
-  expect(sink.present).not.toHaveBeenCalled();
-  expect(vi.getTimerCount()).toBe(0);
-});
+it.each(["ios", "android"] as const)(
+  "streams %s previews over the watch socket without screenshot polling",
+  (platform) => {
+    vi.useFakeTimers();
+    const sockets: string[] = [];
+    class FakeSocket extends EventTarget {
+      constructor(url: string) {
+        super();
+        sockets.push(url);
+      }
+    }
+    vi.stubGlobal("WebSocket", FakeSocket);
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    const sdk = sdkClient();
+    const observed = events();
+    const sink = { present: vi.fn(() => true) };
+    const client = createLimrunDeviceStreamClient(
+      { access, platform, deviceId: `${platform}_owned`, videoOnly: true },
+      sink,
+      observed,
+    );
+    client.start();
+    const options = vi.mocked(createDeviceStream).mock.calls[0]![0];
+    expect(options.watchOnly).toBe(true);
+    options.transport!.connect();
+    expect(new URL(sockets[0]!).pathname).toBe(`/device/limrun/${platform}_owned/watch`);
+    options.onStateChange?.({ ...connected, controlReady: false });
+    const frames = sdk.attachFrameSink.mock.calls[0]![0];
+    frames.present({} as CanvasImageSource, 390, 844, "primary");
+    expect(observed.onStatus).toHaveBeenLastCalledWith("streaming");
+    expect(observed.onInputConnected).not.toHaveBeenCalledWith(true);
+    vi.advanceTimersByTime(10000);
+    expect(fetch).not.toHaveBeenCalled();
+    client.stop();
+    frames.present({} as CanvasImageSource, 390, 844, "primary");
+    expect(sink.present).toHaveBeenCalledOnce();
+    expect(sdk.dispose).toHaveBeenCalledOnce();
+  },
+);
 
 const duoState: NonNullable<DeviceStreamState["duoState"]> = {
   angleDegrees: 180,

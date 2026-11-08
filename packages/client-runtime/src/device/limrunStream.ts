@@ -1,4 +1,3 @@
-// @effect-diagnostics globalFetch:off globalTimers:off - Browser adapter without an Effect runtime.
 import {
   createDeviceStream,
   DuoTouchController,
@@ -26,8 +25,6 @@ export function createLimrunDeviceStreamClient(
   let stopped = true;
   let generation = 0;
   let stream: ReturnType<typeof createDeviceStream> | undefined;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let controller: AbortController | undefined;
   let width = 0;
   let height = 0;
   let streaming = false;
@@ -101,9 +98,6 @@ export function createLimrunDeviceStreamClient(
   const stop = () => {
     stopped = true;
     generation++;
-    controller?.abort();
-    controller = undefined;
-    clearTimeout(timer);
     releaseTouch();
     duoControl.clear();
     stream?.dispose();
@@ -173,45 +167,12 @@ export function createLimrunDeviceStreamClient(
     }
     duoTouch.touch(phase, x, y, raw);
   };
-  // The hub only admits control-authorized viewers to the Limrun signaling endpoint.
-  const readFrame = async (epoch: number) => {
-    const active = () => !stopped && epoch === generation;
-    if (!active()) return;
-    controller = new AbortController();
-    try {
-      const response = await fetch(
-        withDeviceHubQuery(`${target.access.httpBase}${route}/screenshot`, target.access),
-        { credentials: target.access.credentials ? "include" : "omit", signal: controller.signal },
-      );
-      if (!active()) return;
-      if (response.status === 401 || response.status === 403) {
-        unauthorized();
-        return;
-      }
-      if (!response.ok) throw new Error("Screenshot unavailable");
-      const bitmap = await createImageBitmap(await response.blob());
-      try {
-        if (active()) present(bitmap, bitmap.width, bitmap.height);
-      } finally {
-        bitmap.close();
-      }
-    } catch {
-      if (!active()) return;
-      streaming = false;
-      events.onStatus("connecting", "Reconnecting to Limrun…");
-    }
-    if (active()) timer = setTimeout(() => void readFrame(epoch), 1000);
-  };
   const start = () => {
     if (!stopped) return;
     stopped = false;
     const epoch = ++generation;
     const active = () => !stopped && epoch === generation;
     events.onStatus("connecting");
-    if (target.videoOnly) {
-      void readFrame(epoch);
-      return;
-    }
     let innerAttached = false;
     const receiveFrame = (
       source: CanvasImageSource,
@@ -237,10 +198,14 @@ export function createLimrunDeviceStreamClient(
     const client = createDeviceStream({
       platform: target.platform,
       autoReconnect: true,
+      watchOnly: target.videoOnly ?? false,
       transport: {
         connect: () => {
           const socket = new WebSocket(
-            withDeviceHubQuery(`${target.access.wsBase}${route}/ws`, target.access),
+            withDeviceHubQuery(
+              `${target.access.wsBase}${route}/${target.videoOnly ? "watch" : "ws"}`,
+              target.access,
+            ),
           );
           let opened = false;
           socket.addEventListener(

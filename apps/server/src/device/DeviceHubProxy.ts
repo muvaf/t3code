@@ -21,7 +21,6 @@ import * as DeviceService from "./DeviceService.ts";
 import { repeatStillFrame } from "./mjpegStillFrame.ts";
 
 const ALLOWED_PATHS: ReadonlyArray<RegExp> = [
-  /^\/limrun\/[^/]+\/screenshot$/,
   /^\/api\/devices$/,
   /^\/vendor\/serve-sim\/api$/,
   /^\/vendor\/serve-sim\/api\/screenshot$/,
@@ -46,7 +45,7 @@ const MUTABLE_PATHS: ReadonlyArray<RegExp> = [
 ];
 
 const ALLOWED_WS_PATHS: ReadonlyArray<RegExp> = [
-  /^\/limrun\/[^/]+\/ws$/,
+  /^\/limrun\/[^/]+\/(ws|watch)$/,
   /^\/api\/devices\/ws$/,
   /^\/vendor\/serve-sim\/helper\/ws$/,
   /^\/vendor\/serve-emu\/ws$/,
@@ -200,7 +199,7 @@ const handler = Effect.gen(function* () {
     return HttpServerResponse.text("Method Not Allowed", { status: 405 });
   }
   const controlsDevice =
-    (upgrade && hubPath !== "/api/devices/ws") ||
+    (upgrade && hubPath !== "/api/devices/ws" && !/^\/limrun\/[^/]+\/watch$/.test(hubPath)) ||
     (!readOnly && /\/api\/(stream-(mode|settings)|fold)$/.test(hubPath));
   yield* authenticateMediaRequest(
     controlsDevice ? AuthOrchestrationOperateScope : AuthOrchestrationReadScope,

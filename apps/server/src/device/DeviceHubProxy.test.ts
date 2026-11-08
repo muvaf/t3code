@@ -90,20 +90,38 @@ describe("device hub proxy", () => {
     expect(finalized()).toBe(1);
   });
 
-  it.each(["/vendor/serve-sim/helper/ws", "/vendor/serve-emu/ws", "/limrun/ios_owned/ws"])(
-    "rejects input socket %s for a read-only session",
-    async (path) => {
-      const { handler, requests } = fixture([AuthOrchestrationReadScope]);
-      const response = await handler(
-        new Request(`http://t3.test/api/device-hub${path}`, { headers: { upgrade: "websocket" } }),
-      );
-      expect(response.status).toBe(403);
-      expect(requests).toEqual([]);
-    },
-  );
+  it.each([
+    "/vendor/serve-sim/helper/ws",
+    "/vendor/serve-emu/ws",
+    "/limrun/ios_owned/ws",
+    "/limrun/android_owned/ws?watchOnly=true",
+  ])("rejects input socket %s for a read-only session", async (path) => {
+    const { handler, requests } = fixture([AuthOrchestrationReadScope]);
+    const response = await handler(
+      new Request(`http://t3.test/api/device-hub${path}`, { headers: { upgrade: "websocket" } }),
+    );
+    expect(response.status).toBe(403);
+    expect(requests).toEqual([]);
+  });
+
+  it("requires authentication for watch sockets and removes the polling route", async () => {
+    const { handler, requests } = fixture([]);
+    const denied = await handler(
+      new Request("http://t3.test/api/device-hub/limrun/ios_owned/watch", {
+        headers: { upgrade: "websocket" },
+      }),
+    );
+    expect(denied.status).toBe(403);
+    const removed = await handler(
+      new Request("http://t3.test/api/device-hub/limrun/ios_owned/screenshot"),
+    );
+    expect(removed.status).toBe(404);
+    expect(requests).toEqual([]);
+  });
 
   it("authenticates adapter screenshots and keeps failures out of upstream routing", async () => {
-    const path = "http://t3.test/api/device-hub/limrun/ios_owned/screenshot?wsTicket=secret";
+    const path =
+      "http://t3.test/api/device-hub/vendor/serve-sim/api/screenshot?device=ios_owned&wsTicket=secret";
     let calls = 0;
     const readResponse: DeviceHost.DeviceHostReady["readResponse"] = (_route, search) =>
       Effect.sync(() => {
