@@ -9,14 +9,13 @@ import type { DeviceHostSession } from "@limrun/api/serve-sim-host";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as FiberMap from "effect/FiberMap";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveNodeExecutable } from "@t3tools/shared/nodeRuntime";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as ServerConfig from "../config.ts";
-import * as ProcessRunner from "../processRunner.ts";
+import * as AgentDeviceDaemon from "./AgentDeviceDaemon.ts";
 import { requireSettingsSecret } from "../secrets/settingsSecretValue.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import * as LimrunApi from "./LimrunApi.ts";
@@ -65,14 +64,12 @@ const catalog: ReadonlyArray<DeviceHost.HostDevice> = [
   },
 ];
 
-const decodeDaemon = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.Struct({ httpPort: Schema.Int, token: Schema.String })),
-);
 interface Running {
   session: DeviceHostSession;
   platform: DeviceHostSession["platform"];
   dir: string;
   cwd: string;
+  daemon: Effect.Success<ReturnType<typeof AgentDeviceDaemon.make>>;
   endpoint?: DeviceHost.AgentDeviceBinding;
 }
 
@@ -83,12 +80,13 @@ export const make = Effect.fn("LimrunDeviceHost.make")(function* (
   const api = yield* LimrunApi.LimrunApi;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const runner = yield* ProcessRunner.ProcessRunner;
   const server = yield* ServerConfig.ServerConfig;
   const environment = yield* HostProcess.Environment;
   const secrets = yield* SecretResolver.SecretResolver;
   const nodeContext =
     yield* Effect.context<Effect.Services<ReturnType<typeof resolveNodeExecutable>>>();
+  const daemonContext =
+    yield* Effect.context<Effect.Services<ReturnType<typeof AgentDeviceDaemon.make>>>();
   const lock = yield* Semaphore.make(1);
   const renewals = yield* FiberMap.make<string>();
   const live = new Map<string, Running>();
@@ -137,46 +135,15 @@ export const make = Effect.fn("LimrunDeviceHost.make")(function* (
     });
     return hub;
   });
-  const agentEnv = (item: Running): NodeJS.ProcessEnv => ({
-    ...Object.fromEntries(
-      Object.entries(environment).filter(
-        ([name]) => !/^(AGENT_DEVICE_|LIM_IOS_|LIM_ANDROID_|LIMRUN_|LIM_API_KEY$)/.test(name),
-      ),
-    ),
-    ELECTRON_RUN_AS_NODE: "1",
-    AGENT_DEVICE_STATE_DIR: item.dir,
-    AGENT_DEVICE_DAEMON_SERVER_MODE: "http",
-    AGENT_DEVICE_DAEMON_IDLE_TIMEOUT_MS: "0",
-    AGENT_DEVICE_NO_UPDATE_NOTIFIER: "1",
-    ...item.session.agentEnv,
-  });
   const agent = Effect.fn("LimrunDeviceHost.agent")(function* (
     item: Running,
     args: ReadonlyArray<string>,
   ) {
     if (!cli) return yield* unavailable("Limrun agent tools are not ready.");
-    const result = yield* runner.run({
-      command: cli.nodePath,
-      args: [
-        cli.entryPath,
-        ...args,
-        ...(args[0] === "daemon" ? [] : ["--session", `t3-${item.session.slot}`]),
-        "--json",
-      ],
-      cwd: item.cwd,
-      env: agentEnv(item),
-      timeout: "2 minutes",
-    });
-    if (result.code !== 0)
-      return yield* unavailable(
-        `agent-device ${args[0]} failed (exit ${result.code}). Check the Limrun runner and daemon logs in ${item.dir}.`,
-      );
-    return result;
+    return yield* item.daemon.run(cli, args);
   });
   const stopDaemon = (item: Running) =>
-    Effect.suspend(() =>
-      cli ? agent(item, ["daemon", "stop"]).pipe(Effect.asVoid) : Effect.void,
-    ).pipe(
+    Effect.suspend(() => (cli ? item.daemon.stop(cli) : Effect.void)).pipe(
       Effect.tapError(() =>
         Effect.logWarning("Could not stop Limrun agent daemon", {
           deviceId: item.session.id,
@@ -190,16 +157,14 @@ export const make = Effect.fn("LimrunDeviceHost.make")(function* (
       ),
     );
   const startAgent = Effect.fn("LimrunDeviceHost.startAgent")(function* (item: Running) {
-    if (item.endpoint) return item.endpoint;
     if (!cli) cli = yield* agentCli;
-    yield* fs.makeDirectory(item.dir, { recursive: true });
+    const daemon = yield* item.daemon.start(cli);
+    if (item.endpoint?.baseUrl === daemon.baseUrl && item.endpoint.token === daemon.token)
+      return item.endpoint;
     yield* agent(item, ["connect", "limrun", "--platform", item.platform]);
     yield* agent(item, ["boot", "--platform", item.platform]);
-    const daemon = yield* fs
-      .readFileString(path.join(item.dir, "daemon.json"))
-      .pipe(Effect.flatMap(decodeDaemon));
     item.endpoint = {
-      baseUrl: `http://127.0.0.1:${daemon.httpPort}`,
+      baseUrl: daemon.baseUrl,
       token: daemon.token,
       agentDeviceId: null,
       session: `t3-${item.session.slot}`,
@@ -259,12 +224,25 @@ export const make = Effect.fn("LimrunDeviceHost.make")(function* (
                 signal,
               ),
             );
-            const item: Running = {
-              session,
-              platform: session.platform,
-              dir: path.join(directory, session.slot),
-              cwd: context?.workspaceRoot ?? directory,
-            };
+            const dir = path.join(directory, session.slot);
+            const cwd = context?.workspaceRoot ?? directory;
+            const daemon = yield* AgentDeviceDaemon.make({
+              hostId: config.id,
+              stateDir: dir,
+              cwd,
+              session: `t3-${session.slot}`,
+              environment: {
+                ...Object.fromEntries(
+                  Object.entries(environment).filter(
+                    ([name]) =>
+                      !/^(AGENT_DEVICE_|LIM_IOS_|LIM_ANDROID_|LIMRUN_|LIM_API_KEY$)/.test(name),
+                  ),
+                ),
+                ELECTRON_RUN_AS_NODE: "1",
+                ...session.agentEnv,
+              },
+            }).pipe(Effect.provide(daemonContext));
+            const item: Running = { session, platform: session.platform, dir, cwd, daemon };
             live.set(session.id, item);
             yield* FiberMap.run(
               renewals,

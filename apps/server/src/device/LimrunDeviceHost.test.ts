@@ -6,6 +6,8 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Scope from "effect/Scope";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -33,6 +35,7 @@ const fixture = Effect.gen(function* () {
   const removed: string[] = [];
   const commands: Array<ProcessRunner.ProcessRunInput> = [];
   const sessions = new Map<string, DeviceHostSession>();
+  const daemonHealthy = yield* Ref.make(true);
   let sequence = 0;
   const api = LimrunApi.LimrunApi.of({
     createHost: (key, options) => {
@@ -90,7 +93,7 @@ const fixture = Effect.gen(function* () {
       Effect.gen(function* () {
         commands.push(input);
         const directory = input.env!.AGENT_DEVICE_STATE_DIR!;
-        if (input.args[1] === "boot")
+        if (input.args[1] === "devices")
           yield* fs.writeFileString(
             `${directory}/daemon.json`,
             JSON.stringify({ httpPort: 4500 + commands.length, token: "daemon-token" }),
@@ -115,6 +118,19 @@ const fixture = Effect.gen(function* () {
   ).pipe(
     Effect.provideService(LimrunApi.LimrunApi, api),
     Effect.provideService(ProcessRunner.ProcessRunner, runner),
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.make((request) =>
+        Ref.get(daemonHealthy).pipe(
+          Effect.map((healthy) =>
+            HttpClientResponse.fromWeb(
+              request,
+              new Response("ok", { status: healthy ? 200 : 503 }),
+            ),
+          ),
+        ),
+      ),
+    ),
     Effect.provideService(Scope.Scope, scope),
     Effect.provideService(HostProcess.Environment, {
       LIMRUN_API_KEY: "wrong-inherited-key",
@@ -128,10 +144,59 @@ const fixture = Effect.gen(function* () {
     }),
   );
   const ready = yield* host.ensureReady(() => Effect.void);
-  return { host, ready, removed, commands, sessions };
+  return { host, ready, removed, commands, sessions, daemonHealthy };
 });
 
 describe("Limrun host binding", () => {
+  it.effect(
+    "rebinds the Limrun session after the shared manager replaces an unhealthy daemon",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        const template = (yield* f.ready.devices.list).devices.find(
+          (device) => device.platform === "ios",
+        )!;
+        const id = yield* f.ready.devices.boot(template, { workspaceRoot: "/project" });
+        const first = yield* f.ready.devices.agentEndpoint!(id);
+        expect(yield* f.ready.devices.agentEndpoint!(id)).toEqual(first);
+        expect(f.commands.map((command) => command.args[1])).toEqual([
+          "devices",
+          "connect",
+          "boot",
+        ]);
+
+        yield* Ref.set(f.daemonHealthy, false);
+        const restarted = yield* f.ready.devices.agentEndpoint!(id);
+        expect(restarted.baseUrl).not.toBe(first.baseUrl);
+        expect(restarted.session).toBe(first.session);
+        expect(restarted.stateDir).toBe(first.stateDir);
+        expect(f.commands.map((command) => command.args[1])).toEqual([
+          "devices",
+          "connect",
+          "boot",
+          "devices",
+          "connect",
+          "boot",
+        ]);
+        for (const command of f.commands) {
+          expect(command.cwd).toBe("/project");
+          expect(command.env?.AGENT_DEVICE_STATE_DIR).toBe(first.stateDir);
+          expect(command.env?.AGENT_DEVICE_DAEMON_IDLE_TIMEOUT_MS).toBe("0");
+          expect(command.env?.LIM_IOS_INSTANCE_TOKEN).toBe(`token-${id}`);
+          if (command.args[1] !== "devices") expect(command.args).toContain(first.session);
+        }
+        yield* f.host.stopAgent;
+        expect(f.commands.at(-1)?.args).toEqual([
+          "/agent/main.mjs",
+          "daemon",
+          "stop",
+          "--state-dir",
+          first.stateDir,
+        ]);
+        expect(f.removed).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
   it.effect("isolates attached agent credentials and proxies only owned instances", () =>
     Effect.gen(function* () {
       const f = yield* fixture;
