@@ -1,4 +1,5 @@
 import Limrun from "@limrun/api";
+import { createServeSimAdapter, type ServeSimAdapterOptions } from "@limrun/api/serve-sim";
 import { createInstanceClient as createIosClient } from "@limrun/api/ios-client";
 import { createInstanceClient as createAndroidClient } from "@limrun/api/instance-client";
 import * as Context from "effect/Context";
@@ -41,6 +42,9 @@ export const request = <A>(operation: string, run: (signal: AbortSignal) => Prom
 export class LimrunApi extends Context.Service<
   LimrunApi,
   {
+    readonly createHub: (
+      options: ServeSimAdapterOptions,
+    ) => Effect.Effect<Awaited<ReturnType<typeof createServeSimAdapter>>, LimrunRequestError>;
     readonly create: (
       key: string,
       platform: DevicePlatform,
@@ -85,6 +89,9 @@ const client = (apiKey: string) =>
 export const layer = Layer.succeed(
   LimrunApi,
   LimrunApi.of({
+    createHub: Effect.fn("LimrunApi.createHub")((options) =>
+      request("create compatibility hub", () => createServeSimAdapter(options)),
+    ),
     create: Effect.fn("LimrunApi.create")((key, platform, input) =>
       request("create", async (signal) => {
         const params = {

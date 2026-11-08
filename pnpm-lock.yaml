@@ -867,8 +867,8 @@ importers:
         specifier: 0.11.0
         version: 0.11.0(patch_hash=cc71fcec015f4d39bc96ae2e2bf6b0ca678124c722c66a7841efce9d34b5983c)
       '@limrun/api':
-        specifier: 0.69.1
-        version: 0.69.1(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6)
+        specifier: github:limrun-inc/typescript-sdk#78f3d9b889b90d6bb93667e9ff7db1aa4a5c4b2f
+        version: https://codeload.github.com/limrun-inc/typescript-sdk/tar.gz/78f3d9b889b90d6bb93667e9ff7db1aa4a5c4b2f(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6)
       '@muse-code/sdk':
         specifier: 1.4.6
         version: 1.4.6(patch_hash=7b495b607fc5d76b444c7c4d58821e839726a30e6f3c53564f0d59f2d5b42101)(@types/node@24.12.4)
@@ -1511,9 +1511,6 @@ importers:
 
   packages/client-runtime:
     dependencies:
-      '@limrun/ui':
-        specifier: 0.20.3
-        version: 0.20.3(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@pierre/diffs':
         specifier: 1.6.1
         version: 1.6.1(patch_hash=322ac5f5db8b5715189c010802047f8235c3a45d8ed5ca0ba60fac266e2eba34)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -4947,14 +4944,10 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@limrun/api@0.69.1':
-    resolution: {integrity: sha512-aPxWiE+ZTclJO4kM/qhHRkn00E7CtsNP3+QrKO0XowNWgoA8pATxD/hoQURiruQTW1nmWQ9L21mwxrZ44ZBKlg==}
-
-  '@limrun/ui@0.20.3':
-    resolution: {integrity: sha512-c1WgdYD2711ug5CDkHjqjO7CLYMEgqjfSbeiCRZufxuRoQNU8OhnmC3gFM0eH58JLU7CTe2/DOECfr1PU+vsGA==}
-    peerDependencies:
-      react: ^18.0.0 || ^19.0.0
-      react-dom: ^18.0.0 || ^19.0.0
+  '@limrun/api@https://codeload.github.com/limrun-inc/typescript-sdk/tar.gz/78f3d9b889b90d6bb93667e9ff7db1aa4a5c4b2f':
+    resolution: {gitHosted: true, integrity: sha512-y2yXBj14X6u/TsdEpsIAvjy0rLo9vOv5Va3dbfiTgWnJ+PazqzFvR/M3LwMillLiCWTYNl1foyc6DNeliFucNQ==, tarball: https://codeload.github.com/limrun-inc/typescript-sdk/tar.gz/78f3d9b889b90d6bb93667e9ff7db1aa4a5c4b2f}
+    version: 0.69.4
+    engines: {node: '>=20.18.1'}
 
   '@limrun/xdelta3-wasm@0.2.0':
     resolution: {integrity: sha512-mEohO7CYj4Gdc0v1Gr/AjlBhfbXQnIz6+2wmMhRfwz8hXZrsIC/yqYQhfoDhu1ysqQwBnU5lDDLPUGdUu+8hPQ==}
@@ -11703,9 +11696,6 @@ packages:
   three@0.180.0:
     resolution: {integrity: sha512-o+qycAMZrh+TsE01GqWUxUIKR1AL0S8pq7zDkYOQw8GqfX8b8VoCKYUoHbhiX5j+7hr8XsuHDVU6+gkQJQKg9w==}
 
-  three@0.183.2:
-    resolution: {integrity: sha512-di3BsL2FEQ1PA7Hcvn4fyJOlxRRgFYBpMTcyOgkwJIaDOdJMebEFPA+t98EvjuljDx4hNulAGwF6KIjtwI5jgQ==}
-
   throat@5.0.0:
     resolution: {integrity: sha512-fcwX4mndzpLQKBS1DVYhGAcYaYt7vsHNIvQV+WXMvnow5cgjPphq5CaayLaGsjRdSCKZFNGt7/GYAuXaNOiYCA==}
 
@@ -15030,7 +15020,7 @@ snapshots:
   '@libsql/win32-x64-msvc@0.5.29':
     optional: true
 
-  '@limrun/api@0.69.1(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6)':
+  '@limrun/api@https://codeload.github.com/limrun-inc/typescript-sdk/tar.gz/78f3d9b889b90d6bb93667e9ff7db1aa4a5c4b2f(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6)':
     dependencies:
       '@limrun/xdelta3-wasm': 0.2.0
       '@types/har-format': 1.2.16
@@ -15045,12 +15035,6 @@ snapshots:
       - bufferutil
       - supports-color
       - utf-8-validate
-
-  '@limrun/ui@0.20.3(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
-    dependencies:
-      react: 19.3.0
-      react-dom: 19.3.0(react@19.3.0)
-      three: 0.183.2
 
   '@limrun/xdelta3-wasm@0.2.0': {}
 
@@ -22252,8 +22236,6 @@ snapshots:
       source-map-support: 0.5.21
 
   three@0.180.0: {}
-
-  three@0.183.2: {}
 
   throat@5.0.0: {}
 

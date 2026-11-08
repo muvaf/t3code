@@ -1,6 +1,5 @@
 // @effect-diagnostics globalFetch:off globalTimers:off - This browser and WebView transport runs without an Effect runtime.
 
-import { createLimrunDeviceStreamClient } from "./limrunStream.ts";
 import {
   createDuoControl,
   type DuoCommand,
@@ -122,7 +121,6 @@ export interface DeviceStreamTarget {
   readonly videoOnly?: boolean;
   /** The host speaks only serve-sim's AVCC stream and input socket, on both platforms (Simlock). */
   readonly serveSimOnly?: boolean;
-  readonly limrun?: boolean;
 }
 
 export type DeviceHardwareButton = "home" | "back" | "recents" | "power" | "appSwitcher";
@@ -406,7 +404,6 @@ export function createDeviceStreamClient(
   output: HTMLCanvasElement | DeviceFrameSink,
   events: DeviceStreamEvents,
 ): DeviceStreamClient {
-  if (target.limrun) return createLimrunDeviceStreamClient(target, output, events);
   const { access, platform, deviceId } = target;
   const sink = "present" in output ? output : createCanvasFrameSink(output);
   // Android normally streams over serve-emu's socket; a serve-sim-only host serves it like iOS.
@@ -729,7 +726,7 @@ export function createDeviceStreamClient(
         return;
       }
       if (response.status === 401 || response.status === 403) return handleUnauthorized();
-      if (response.status === 409 && !target.panelId) {
+      if (response.status === 409) {
         const locked = decodeTransportLocked(await response.json().catch(() => null));
         if (Option.isSome(locked)) {
           if (!isCurrent()) return;
@@ -879,7 +876,11 @@ export function createDeviceStreamClient(
   };
 
   const webRtcUrl = (action: "offer" | "close") =>
-    httpUrl(avcc ? `/helper/${device}/webrtc/${action}` : `/webrtc/${action}?device=${device}`);
+    httpUrl(
+      avcc
+        ? `/helper/${device}/webrtc/${action}${target.panelId ? `?panel=${target.panelId}` : ""}`
+        : `/webrtc/${action}?device=${device}`,
+    );
 
   const closePeer = () => {
     const current = peer;

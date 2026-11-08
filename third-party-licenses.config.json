@@ -230,15 +230,6 @@
   ],
   "packageOverrides": [
     {
-      "name": "@limrun/ui",
-      "version": "0.20.3",
-      "sourceUrl": "https://github.com/limrun-inc/typescript-sdk/tree/431c610c16f51f60777278fbbe917d9d307eb73c/packages/ui",
-      "generatedNotice": {
-        "licenseId": "MIT",
-        "copyrights": ["Copyright (c) Limrun, Inc."]
-      }
-    },
-    {
       "name": "entities",
       "version": "8.1.0",
       "license": "BSD-2-Clause",

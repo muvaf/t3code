@@ -1,3 +1,4 @@
+import type { ServeSimAdapterOptions } from "@limrun/api/serve-sim";
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -40,7 +41,17 @@ const fixture = Effect.gen(function* () {
   let refuseDelete = false;
   let loseCreateResponse = false;
   const slots = new Map<string, LimrunApi.Instance>();
+  let hubOptions: ServeSimAdapterOptions;
   const api = LimrunApi.LimrunApi.of({
+    createHub: (options) => {
+      hubOptions = options;
+      return Effect.succeed({
+        origin: "http://127.0.0.1:12345",
+        headers: { authorization: "Bearer hub-secret" },
+        close: async () => {},
+        releaseDevice: async () => {},
+      });
+    },
     create: (_key, platform, input) =>
       Effect.gen(function* () {
         const existing = slots.get(input.slot);
@@ -176,6 +187,7 @@ const fixture = Effect.gen(function* () {
     records,
     createdModels,
     watchRequests,
+    hubOptions: () => hubOptions,
     refuseWatch: () => {
       refuseWatch = true;
     },
@@ -202,30 +214,24 @@ describe("Limrun device ownership", () => {
             (d) => d.platform === platform,
           )!;
           const id = yield* f.ready.devices.boot(device);
-          const upstream = yield* f.ready.upstream!(
-            `/limrun/${id}/watch`,
-            new URLSearchParams("token=interactive&watchOnly=false"),
-          );
-          expect(upstream).toEqual({
-            url: `wss://region.test/v1/${id}/stream`,
-            headers: { authorization: `Bearer watch-${id}` },
-            protocols: [],
-          });
+          const resolved = yield* Effect.promise(() => f.hubOptions().resolveDevice(id));
+          expect(resolved).toBeDefined();
+          expect(yield* Effect.promise(() => resolved!.token("watch"))).toBe(`watch-${id}`);
           expect(f.watchRequests.at(-1)).toEqual({ key: "organization-key", platform, id });
           expect(
-            yield* f.ready.upstream!("/limrun/not-owned/watch", new URLSearchParams()),
-          ).toBeNull();
-          expect(f.watchRequests).toHaveLength(platform === "ios" ? 1 : 2);
+            yield* Effect.promise(() => f.hubOptions().resolveDevice("not-owned")),
+          ).toBeUndefined();
           yield* f.ready.devices.shutdown({ id, platform });
         }
         const device = (yield* f.ready.devices.list).devices[0]!;
         const id = yield* f.ready.devices.boot(device);
         f.refuseWatch();
-        expect(yield* f.ready.upstream!(`/limrun/${id}/watch`, new URLSearchParams())).toBeNull();
-        expect(
-          (yield* f.ready.upstream!(`/limrun/${id}/ws`, new URLSearchParams()))?.headers
-            .authorization,
-        ).toBe(`Bearer token-${id}`);
+        const resolved = yield* Effect.promise(() => f.hubOptions().resolveDevice(id));
+        const denied = yield* LimrunApi.request("watch token", () => resolved!.token("watch")).pipe(
+          Effect.result,
+        );
+        expect(denied._tag).toBe("Failure");
+        expect(yield* Effect.promise(() => resolved!.token("stream"))).toBe(`token-${id}`);
       }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
@@ -243,14 +249,16 @@ describe("Limrun device ownership", () => {
       expect(env.AGENT_DEVICE_DAEMON_BASE_URL).toBeUndefined();
       expect(env.LIM_ANDROID_INSTANCE_TOKEN).toBe(`token-${id}`);
       expect(env.LIM_ANDROID_INSTANCE_ADB_URL).toContain(id);
-      expect(yield* f.ready.upstream!(`/limrun/${id}/ws`, new URLSearchParams())).toEqual({
-        url: `wss://region.test/v1/${id}/stream`,
-        headers: { authorization: `Bearer token-${id}` },
+      expect(
+        yield* f.ready.upstream!(`/vendor/serve-emu/api`, new URLSearchParams({ device: id })),
+      ).toEqual({
+        url: `http://127.0.0.1:12345/vendor/serve-emu/api?device=${id}`,
+        headers: { authorization: "Bearer hub-secret" },
         protocols: [],
       });
       expect(
-        yield* f.ready.upstream!("/limrun/someone-elses-device/ws", new URLSearchParams()),
-      ).toBeNull();
+        yield* Effect.promise(() => f.hubOptions().resolveDevice("someone-elses-device")),
+      ).toBeUndefined();
       yield* f.host.stopAgent;
       expect(f.removed).toEqual([]);
       expect(f.commands.at(-1)!.args.slice(1, 3)).toEqual(["daemon", "stop"]);

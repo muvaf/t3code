@@ -545,7 +545,6 @@
     "test": "vp test run"
   },
   "dependencies": {
-    "@limrun/ui": "0.20.3",
     "@pierre/diffs": "catalog:",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/provider-acp-registry": "workspace:*",

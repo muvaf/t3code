@@ -231,7 +231,6 @@ it("offers working Limrun Duo fold controls in the flat viewer without physical 
           deviceName="iPhone Duo"
           platform="ios"
           visible
-          limrun
           allowPhoneView={false}
           renderControls={(controls) => controls.foldingControls}
         />

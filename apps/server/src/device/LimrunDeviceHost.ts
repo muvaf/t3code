@@ -1,5 +1,4 @@
 import * as Random from "effect/Random";
-import * as DateTime from "effect/DateTime";
 import {
   DeviceHostUnavailableError,
   DeviceOperationError,
@@ -65,7 +64,6 @@ const catalog: ReadonlyArray<DeviceHost.HostDevice> = [
     physical: false,
   },
 ];
-const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeDaemon = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Struct({ httpPort: Schema.Int, token: Schema.String })),
 );
@@ -79,8 +77,6 @@ interface Running {
   cwd: string;
   runtime?: LimrunApi.Runtime;
   endpoint?: DeviceHost.AgentDeviceBinding;
-  events?: Array<{ id: number; timestamp: string; kind: string; summary: string }>;
-  stopEvents?: () => void;
 }
 
 export const make = Effect.fn("LimrunDeviceHost.make")(function* (
@@ -100,6 +96,30 @@ export const make = Effect.fn("LimrunDeviceHost.make")(function* (
   const renewals = yield* FiberMap.make<string>();
   const live = new Map<string, Running>();
   const directory = path.join(server.stateDir, "device", "limrun", config.id);
+  const context = yield* Effect.context<never>();
+  const hub = yield* Effect.acquireRelease(
+    api.createHub({
+      resolveDevice: async (id) => {
+        const item = live.get(id);
+        if (
+          !item?.instance.status.endpointWebSocketUrl ||
+          !item.instance.status.token ||
+          !item.instance.status.apiUrl
+        )
+          return undefined;
+        return {
+          platform: item.platform,
+          endpoint: item.instance.status.endpointWebSocketUrl,
+          apiUrl: item.instance.status.apiUrl,
+          token: (grant) =>
+            grant === "watch"
+              ? Effect.runPromiseWith(context)(api.watchToken(item.key, item.platform, id))
+              : Promise.resolve(item.instance.status.token!),
+        };
+      },
+    }),
+    (hub) => Effect.promise(() => hub.close()),
+  );
   let owner: string | undefined;
   let ready: DeviceHost.DeviceHostReady | null = null;
   let cli: { nodePath: string; entryPath: string } | undefined;
@@ -192,37 +212,13 @@ export const make = Effect.fn("LimrunDeviceHost.make")(function* (
     // Keep failed deletions tracked: a retry must not silently exceed the host's instance limit.
     yield* api.remove(item.key, item.platform, item.instance.metadata.id);
     yield* stopDaemon(item);
-    item.stopEvents?.();
     item.runtime?.client.disconnect();
+    yield* Effect.promise(() => hub.releaseDevice(item.instance.metadata.id));
     live.delete(item.instance.metadata.id);
   });
   const runtime = Effect.fn("LimrunDeviceHost.runtime")(function* (item: Running) {
     if (!item.runtime) {
       item.runtime = yield* api.connect(item.instance, item.platform);
-      if (item.runtime.platform === "ios") {
-        const client = item.runtime.client;
-        const started = yield* LimrunApi.request("start event capture", () =>
-          client.startEventCapture(),
-        ).pipe(Effect.result);
-        if (started._tag === "Success") {
-          item.events = [];
-          let sequence = 0;
-          item.stopEvents = client.streamEventCapture({
-            onEvent: (event) => {
-              item.events!.push({
-                id: ++sequence,
-                timestamp: DateTime.formatIso(DateTime.makeUnsafe(event.ts)),
-                kind: event.type,
-                summary: event.summary ?? event.type,
-              });
-              if (item.events!.length > 100) item.events!.shift();
-            },
-          });
-        } else
-          yield* Effect.logWarning("Limrun event capture unavailable", {
-            deviceId: item.instance.metadata.id,
-          });
-      }
     }
     return item.runtime;
   });
@@ -393,8 +389,8 @@ export const make = Effect.fn("LimrunDeviceHost.make")(function* (
             if (state === null || state.status.state === "terminated") {
               yield* FiberMap.remove(renewals, item.instance.metadata.id);
               yield* stopDaemon(item);
-              item.stopEvents?.();
               item.runtime?.client.disconnect();
+              yield* Effect.promise(() => hub.releaseDevice(item.instance.metadata.id));
               live.delete(item.instance.metadata.id);
             }
           }
@@ -520,74 +516,16 @@ export const make = Effect.fn("LimrunDeviceHost.make")(function* (
           );
           ready = {
             nodePath,
-            hub: { origin: "http://127.0.0.1" },
+            hub: { origin: hub.origin },
             devices,
             run,
-            readResponse: Effect.fn("LimrunDeviceHost.readResponse")(
-              function* (route, search) {
-                const helper = /^\/vendor\/serve-sim\/helper\/([^/]+)\/(ax|foreground)$/.exec(
-                  route,
-                );
-                const id = helper?.[1] ?? search.get("device");
-                const item = id ? live.get(id) : undefined;
-                if (!item) return null;
-                if (route.endsWith("/api/screenshot"))
-                  return { body: yield* devices.screenshot(item.device), contentType: "image/png" };
-                const connected = yield* runtime(item);
-                const json = (value: unknown) =>
-                  encodeJson(value).pipe(
-                    Effect.map((text) => ({
-                      body: new TextEncoder().encode(text),
-                      contentType: "application/json",
-                    })),
-                  );
-                if (helper?.[2] === "ax" && connected.platform === "ios")
-                  return yield* json(
-                    yield* LimrunApi.request("accessibility", () => connected.client.elementTree()),
-                  );
-                if (
-                  route === "/vendor/serve-emu/api/accessibility" &&
-                  connected.platform === "android"
-                )
-                  return yield* json(
-                    yield* LimrunApi.request("accessibility", () =>
-                      connected.client.getElementTree(),
-                    ),
-                  );
-                if (route === "/vendor/serve-sim/api/event-log/events" && item.events)
-                  return {
-                    body: new TextEncoder().encode(
-                      `retry: 1000\ndata: ${yield* encodeJson({ events: item.events })}\n\n`,
-                    ),
-                    contentType: "text/event-stream",
-                  };
-                return null;
-              },
-              Effect.mapError(failed("read device")),
-            ),
             helpers: { serveSimAxSettings: null, serveSimCli: null },
-            upstream: Effect.fn("LimrunDeviceHost.upstream")(function* (route) {
-              const match = /^\/limrun\/([^/]+)\/(ws|watch)$/.exec(route);
-              const item = match ? live.get(match[1]!) : undefined;
-              if (!item?.instance.status.endpointWebSocketUrl || !item.instance.status.token)
-                return null;
-              const token =
-                match![2] === "watch"
-                  ? yield* api.watchToken(item.key, item.platform, item.instance.metadata.id).pipe(
-                      Effect.catch(() =>
-                        Effect.logWarning("Could not authorize Limrun preview", {
-                          deviceId: item.instance.metadata.id,
-                        }).pipe(Effect.as(null)),
-                      ),
-                    )
-                  : item.instance.status.token;
-              if (!token) return null;
-              return {
-                url: item.instance.status.endpointWebSocketUrl,
-                headers: { authorization: `Bearer ${token}` },
+            upstream: (route, search) =>
+              Effect.succeed({
+                url: `${hub.origin}${route}${search.size ? `?${search}` : ""}`,
+                headers: hub.headers,
                 protocols: [],
-              };
-            }),
+              }),
           };
           return ready;
         }),

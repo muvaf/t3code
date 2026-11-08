@@ -405,7 +405,6 @@ function DeviceMiniPlayer({
             visible
             viewId={viewId}
             serveSimOnly={host?.kind === "simlock"}
-            limrun={host?.kind === "limrun"}
           />
         </div>
       )}

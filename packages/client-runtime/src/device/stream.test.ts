@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   createDeviceStreamClient,
+  type DeviceStreamTarget,
   AvccDemuxer,
   avcCodecString,
   parseSemuPacket,
@@ -555,13 +556,13 @@ describe("shared device stream readiness and recovery", () => {
   });
 });
 
-describe("Android WebRTC device streams", () => {
+describe("WebRTC device streams", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
-  function setup() {
+  function setup(overrides: Partial<DeviceStreamTarget> = {}) {
     vi.useFakeTimers();
     const sockets: Socket[] = [];
     class Socket {
@@ -598,6 +599,10 @@ describe("Android WebRTC device streams", () => {
       constructor() {
         videos.push(this);
       }
+    }
+    if (overrides.platform === "ios") {
+      vi.stubGlobal("VideoDecoder", vi.fn());
+      vi.stubGlobal("EncodedVideoChunk", vi.fn());
     }
     const peers: Peer[] = [];
     class Peer {
@@ -640,6 +645,7 @@ describe("Android WebRTC device streams", () => {
     const client = createDeviceStreamClient(
       {
         platform: "android",
+        ...overrides,
         deviceId: "session-1",
         access: {
           httpBase: "https://test/api/device-hub",
@@ -653,6 +659,34 @@ describe("Android WebRTC device streams", () => {
     );
     return { client, events, fetch, peers, videos, sockets, present };
   }
+
+  it.each([1, 3] as const)("negotiates a watch-only Duo panel %s over WebRTC", async (panelId) => {
+    const { client, fetch, peers, sockets } = setup({ platform: "ios", panelId, videoOnly: true });
+    vi.stubGlobal("VideoDecoder", vi.fn());
+    fetch.mockImplementation((url: string) =>
+      Promise.resolve(
+        url.includes("stream.avcc")
+          ? Response.json(
+              { error: "stream_transport_locked", transport: "webrtc" },
+              { status: 409 },
+            )
+          : url.includes("/api?")
+            ? Response.json({ streamSettings: { transport: "webrtc" } })
+            : Response.json({ type: "answer", sdp: "answer-sdp" }),
+      ),
+    );
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(0);
+    expect(peers[0]?.setRemoteDescription).toHaveBeenCalledWith({
+      type: "answer",
+      sdp: "answer-sdp",
+    });
+    expect(fetch.mock.calls.map(([url]) => url)).toContain(
+      `https://test/api/device-hub/vendor/serve-sim/helper/session-1/webrtc/offer?panel=${panelId}&hostId=eas`,
+    );
+    client.stop();
+  });
 
   it("streams over WebRTC when serve-emu advertises it, with input that reconnects on its own", async () => {
     const { client, events, fetch, peers, videos, sockets, present } = setup();

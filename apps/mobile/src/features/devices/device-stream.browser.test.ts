@@ -124,7 +124,6 @@ it("folds a Limrun Duo in the mobile viewer and reports rejected commands", () =
     start({
       platform: "ios",
       deviceId: "ios_duo",
-      limrun: true,
       access: {
         httpBase: "https://t3.test/device",
         wsBase: "wss://t3.test/device",
