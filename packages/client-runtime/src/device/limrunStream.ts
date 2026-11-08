@@ -1,5 +1,11 @@
 // @effect-diagnostics globalFetch:off globalTimers:off - Browser adapter without an Effect runtime.
-import { createDeviceStream, type DuoState } from "@limrun/ui/core";
+import {
+  createDeviceStream,
+  DuoTouchController,
+  getDuoDisplay,
+  duoDisplayTurns,
+  type DuoState,
+} from "@limrun/ui/core";
 import { createDuoControl, type DuoCommand } from "./duoControl.ts";
 import { createCanvasFrameSink, type DeviceFrameSink } from "./frame.ts";
 import { withDeviceHubQuery } from "./hubAccess.ts";
@@ -29,7 +35,7 @@ export function createLimrunDeviceStreamClient(
   let duo: DuoState | null = null;
   let panels: DuoPanelSinks | null = null;
   let lastScreen: DeviceScreenSize | null = null;
-  let heldTouch: { screenId: number; x: number; y: number } | null = null;
+  const duoTouch = new DuoTouchController((...args) => stream?.sendDisplayTouch(...args));
   const frames = new Map<"primary" | "inner", HTMLCanvasElement>();
   const orientations = {
     portrait: "portrait",
@@ -77,16 +83,8 @@ export function createLimrunDeviceStreamClient(
         error: "This Limrun device does not support that physical pose.",
       });
   };
-  const releaseTouch = () => {
-    if (heldTouch) stream?.sendDisplayTouch(1, heldTouch.screenId, heldTouch.x, heldTouch.y);
-    heldTouch = null;
-  };
-  const selectedDisplay = () => {
-    const state = duo;
-    return state?.displays.find(
-      (display) => display.id === (state.angleDegrees < 90 ? "outer" : "inner"),
-    );
-  };
+  const releaseTouch = () => duoTouch.release();
+  const selectedDisplay = () => getDuoDisplay(duo);
   const route = `/limrun/${encodeURIComponent(target.deviceId)}`;
   const screen = (w: number, h: number) => {
     if (w === width && h === height) return;
@@ -110,6 +108,7 @@ export function createLimrunDeviceStreamClient(
     duoControl.clear();
     stream?.dispose();
     duo = null;
+    duoTouch.setDisplay(undefined);
     lastScreen = null;
     frames.clear();
     panels = null;
@@ -133,14 +132,10 @@ export function createLimrunDeviceStreamClient(
     const display = selectedDisplay();
     if (!duo || !display) return;
     const frame = frames.get(display.id === "inner" ? "inner" : "primary");
-    const orientation: DeviceScreenSize["orientation"] =
-      display.orientation === 2
-        ? "portrait_upside_down"
-        : display.orientation === 3
-          ? "landscape_left"
-          : display.orientation === 4
-            ? "landscape_right"
-            : "portrait";
+    const orientation = (
+      ["portrait", "landscape_left", "portrait_upside_down", "landscape_right"] as const
+    )[duoDisplayTurns(display.orientation)];
+    duoTouch.setDisplay(display);
     const next: DeviceScreenSize = {
       width: frame?.width ?? display.width,
       height: frame?.height ?? display.height,
@@ -152,8 +147,6 @@ export function createLimrunDeviceStreamClient(
       hingeAngle: duo.angleDegrees,
       tableModeAvailable: false,
     };
-    if (lastScreen?.screenId !== next.screenId || lastScreen?.orientation !== orientation)
-      releaseTouch();
     if (
       !lastScreen ||
       lastScreen.screenId !== next.screenId ||
@@ -173,37 +166,12 @@ export function createLimrunDeviceStreamClient(
   };
   const displayTouch = (phase: "begin" | "move" | "end", x: number, y: number, raw: boolean) => {
     if (!inputConnected || !duo) return;
-    x = Math.max(0, Math.min(1, x));
-    y = Math.max(0, Math.min(1, y));
-    if (!raw) {
-      switch (lastScreen?.orientation) {
-        case "landscape_left":
-          [x, y] = [y, 1 - x];
-          break;
-        case "landscape_right":
-          [x, y] = [1 - y, x];
-          break;
-        case "portrait_upside_down":
-          [x, y] = [1 - x, 1 - y];
-          break;
-      }
-    }
+    const display = selectedDisplay();
     if (phase === "begin") {
       releaseTouch();
-      const display = selectedDisplay();
       if (!display || !frames.has(display.id === "inner" ? "inner" : "primary")) return;
-      heldTouch = { screenId: display.screenId, x, y };
     }
-    if (!heldTouch) return;
-    heldTouch.x = x;
-    heldTouch.y = y;
-    stream?.sendDisplayTouch(
-      phase === "begin" ? 0 : phase === "end" ? 1 : 2,
-      heldTouch.screenId,
-      x,
-      y,
-    );
-    if (phase === "end") heldTouch = null;
+    duoTouch.touch(phase, x, y, raw);
   };
   // The hub only admits control-authorized viewers to the Limrun signaling endpoint.
   const readFrame = async (epoch: number) => {

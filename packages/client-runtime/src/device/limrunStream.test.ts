@@ -7,7 +7,10 @@ import {
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { createLimrunDeviceStreamClient } from "./limrunStream.ts";
 
-vi.mock("@limrun/ui/core", () => ({ createDeviceStream: vi.fn() }));
+vi.mock("@limrun/ui/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@limrun/ui/core")>()),
+  createDeviceStream: vi.fn(),
+}));
 const access = {
   httpBase: "https://t3.test/device",
   wsBase: "wss://t3.test/device",
