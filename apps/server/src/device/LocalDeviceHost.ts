@@ -1,3 +1,4 @@
+import * as AgentDeviceDaemon from "./AgentDeviceDaemon.ts";
 import { pruneLocalDeviceTools } from "./deviceToolMaintenance.ts";
 import { deviceToolInstallMessage } from "@t3tools/contracts";
 // The hub runs at origin root; T3 strips its prefix and the Device panel derives stream URLs from it.
@@ -51,8 +52,6 @@ import {
 } from "./DeviceToolchain.ts";
 
 const HUB_READY_TIMEOUT_MS = 30_000;
-const DAEMON_READY_TIMEOUT_MS = 30_000;
-const DAEMON_POLL_MS = 100;
 const HUB_RESTART_STABLE_UPTIME_MS = 60_000;
 const HUB_RESTART_MAX_DELAY_MS = 30_000;
 
@@ -64,27 +63,6 @@ const HubStateFile = Schema.Struct({
 });
 const decodeHubStateFile = Schema.decodeUnknownEffect(Schema.fromJsonString(HubStateFile));
 const encodeHubStateFile = Schema.encodeUnknownEffect(Schema.fromJsonString(HubStateFile));
-
-const AgentDeviceDaemonFile = Schema.Struct({
-  httpPort: Schema.Int,
-  token: Schema.String,
-  pid: Schema.optional(Schema.Int),
-  version: Schema.optional(Schema.String),
-});
-const decodeDaemonFile = Schema.decodeUnknownEffect(Schema.fromJsonString(AgentDeviceDaemonFile));
-
-const decodeAgentDeviceFailure = Schema.decodeUnknownOption(
-  Schema.fromJsonString(
-    Schema.Struct({
-      error: Schema.Struct({
-        details: Schema.Struct({
-          reason: Schema.String,
-          inspection: Schema.optional(Schema.Struct({ reason: Schema.String })),
-        }),
-      }),
-    }),
-  ),
-);
 
 interface HubProcess {
   readonly nodePath: string;
@@ -298,18 +276,20 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       ),
     ]);
     const running = yield* Ref.get(runningRef);
-    const daemon = running?.agentDevice
-      ? yield* readDaemonFile().pipe(Effect.option)
+    const registration = running?.agentDevice
+      ? yield* daemon.read().pipe(Effect.option)
       : Option.none();
     const hubAlive = running
       ? yield* running.hub.child.isRunning.pipe(Effect.orElseSucceed(() => false))
       : false;
     const agentAlive =
-      Option.isSome(daemon) && daemon.value.pid ? yield* isProcessAlive(daemon.value.pid) : false;
+      Option.isSome(registration) && registration.value.pid
+        ? yield* isProcessAlive(registration.value.pid)
+        : false;
     const tools = yield* deviceToolVersions(config.baseDir, {
       ...(hubAlive ? { hub: DEVICE_HUB_VERSION } : {}),
-      ...(agentAlive && Option.isSome(daemon) && daemon.value.version
-        ? { agent: daemon.value.version }
+      ...(agentAlive && Option.isSome(registration) && registration.value.version
+        ? { agent: registration.value.version }
         : {}),
     }).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
@@ -514,136 +494,14 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       Effect.catchCause((cause) => Effect.logWarning("Device hub supervisor failed", { cause })),
     );
 
-  const daemonFilePath = () => path.join(agentDeviceStateDir(path, config.stateDir), "daemon.json");
-
-  const readDaemonFile = Effect.fn("LocalDeviceHost.readDaemonFile")(function* () {
-    const raw = yield* fs.readFileString(daemonFilePath());
-    return yield* decodeDaemonFile(raw);
+  const daemon = yield* AgentDeviceDaemon.make({
+    hostId,
+    stateDir: agentDeviceStateDir(path, config.stateDir),
+    environment: hostEnvironment,
   });
-
-  const startAgentDeviceDaemon = Effect.fn("LocalDeviceHost.startAgentDeviceDaemon")(function* (
-    agentTool: Pick<DeviceToolPaths, "entryPath">,
-    nodePath: string,
-  ): Effect.fn.Return<
-    DeviceHost.AgentDeviceEndpoint,
-    | DeviceHost.DeviceHostError
-    | DeviceHost.DeviceHostTimeoutError
-    | DeviceHost.AgentDeviceStartError
-  > {
-    const stateDir = agentDeviceStateDir(path, config.stateDir);
-    yield* fs.makeDirectory(stateDir, { recursive: true }).pipe(Effect.ignore);
-    const existing = yield* readDaemonFile().pipe(Effect.option);
-    const daemonEnvironment: NodeJS.ProcessEnv = {
-      ...hostEnvironment,
-      AGENT_DEVICE_STATE_DIR: stateDir,
-      AGENT_DEVICE_DAEMON_SERVER_MODE: "http",
-      // Disable the five-minute idle timeout; the server owns shutdown.
-      AGENT_DEVICE_DAEMON_IDLE_TIMEOUT_MS: "0",
-      AGENT_DEVICE_NO_UPDATE_NOTIFIER: "1",
-      FORCE_COLOR: "0",
-      NO_COLOR: "1",
-    };
-    const toEndpoint = (
-      file: typeof AgentDeviceDaemonFile.Type,
-    ): DeviceHost.AgentDeviceEndpoint => ({
-      baseUrl: `http://127.0.0.1:${file.httpPort}`,
-      token: file.token,
-      entryPath: agentTool.entryPath,
-    });
-    if (existing._tag === "Some") {
-      const alive = yield* HttpClient.withScope(httpClient)
-        .get(`http://127.0.0.1:${existing.value.httpPort}/health`)
-        .pipe(
-          Effect.timeout(Duration.seconds(2)),
-          Effect.flatMap((response) =>
-            response.arrayBuffer.pipe(Effect.as(response.status === 200)),
-          ),
-          Effect.scoped,
-          Effect.orElseSucceed(() => false),
-        );
-      if (alive) return toEndpoint(existing.value);
-      yield* fs.remove(daemonFilePath(), { force: true }).pipe(Effect.ignore);
-    }
-    // No `daemon start` exists; `devices` is the cheapest command that starts and awaits it.
-    const runResult = yield* runner
-      .run({
-        command: nodePath,
-        args: [agentTool.entryPath, "devices", "--json"],
-        env: daemonEnvironment,
-        timeout: Duration.millis(DAEMON_READY_TIMEOUT_MS),
-        timeoutBehavior: "timedOutResult",
-      })
-      .pipe(Effect.result);
-    // Discovery may fail after startup; accept a published endpoint or preserve the CLI failure.
-    const started = yield* readDaemonFile().pipe(Effect.option);
-    if (started._tag === "Some") return toEndpoint(started.value);
-    if (runResult._tag === "Failure") {
-      return yield* new DeviceHost.DeviceHostError({
-        hostId,
-        step: "starting agent tools",
-        cause: runResult.failure,
-      });
-    }
-    const result = runResult.success;
-    if (result.timedOut) {
-      return yield* new DeviceHost.DeviceHostTimeoutError({
-        hostId,
-        timeoutMs: DAEMON_READY_TIMEOUT_MS,
-      });
-    }
-    if (result.code !== 0) {
-      const failure = decodeAgentDeviceFailure(result.stdout);
-      const details = Option.isSome(failure) ? failure.value.error.details : undefined;
-      const reason =
-        details?.reason === "daemon_registration_unproven"
-          ? details.inspection?.reason === "non-directory"
-            ? "daemon_lock_not_directory"
-            : "daemon_registration_unproven"
-          : details?.reason === "daemon_retirement_unconfirmed"
-            ? "daemon_retirement_unconfirmed"
-            : "command_failed";
-      return yield* new DeviceHost.AgentDeviceStartError({
-        hostId,
-        stateDir,
-        exitCode: result.code === null ? null : Number(result.code),
-        reason,
-        cause: result,
-      });
-    }
-    const deadline = (yield* Clock.currentTimeMillis) + DAEMON_READY_TIMEOUT_MS;
-    while (true) {
-      const file = yield* readDaemonFile().pipe(Effect.option);
-      if (file._tag === "Some") return toEndpoint(file.value);
-      if ((yield* Clock.currentTimeMillis) > deadline) {
-        return yield* new DeviceHost.DeviceHostTimeoutError({
-          hostId,
-          timeoutMs: DAEMON_READY_TIMEOUT_MS,
-        });
-      }
-      yield* Effect.sleep(Duration.millis(DAEMON_POLL_MS));
-    }
-  });
-
   const stopAgentDeviceDaemon = (
-    agentTool: { readonly entryPath: string; readonly nodePath: string } | null,
-  ) =>
-    agentTool
-      ? runner
-          .run({
-            command: agentTool.nodePath,
-            args: [
-              agentTool.entryPath,
-              "daemon",
-              "stop",
-              "--state-dir",
-              agentDeviceStateDir(path, config.stateDir),
-            ],
-            env: { ...hostEnvironment, AGENT_DEVICE_NO_UPDATE_NOTIFIER: "1" },
-            timeout: Duration.seconds(10),
-            timeoutBehavior: "timedOutResult",
-          })
-          .pipe(Effect.ignore)
-      : Effect.void;
+    tool: { readonly entryPath: string; readonly nodePath: string } | null,
+  ) => (tool ? daemon.stop(tool).pipe(Effect.ignore) : Effect.void);
 
   let agentToolRef: { readonly entryPath: string; readonly nodePath: string } | null = null;
 
@@ -729,10 +587,10 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       > {
         const running = yield* ensureHubReady(onPhase);
         if (running.agentDevice) {
-          const agentDevice = yield* startAgentDeviceDaemon(
-            running.agentDevice,
-            running.hub.nodePath,
-          );
+          const agentDevice = yield* daemon.start({
+            ...running.agentDevice,
+            nodePath: running.hub.nodePath,
+          });
           yield* Ref.set(runningRef, { ...running, agentDevice });
           return { ...toReady(running), agentDevice };
         }
@@ -762,7 +620,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
         );
         agentToolRef = { entryPath: agentTool.entryPath, nodePath: running.hub.nodePath };
         yield* onPhase("starting");
-        const agentDevice = yield* startAgentDeviceDaemon(agentTool, running.hub.nodePath);
+        const agentDevice = yield* daemon.start({ ...agentTool, nodePath: running.hub.nodePath });
         yield* pruneLocalDeviceTools(config.baseDir, running.hub.nodePath, "agent").pipe(
           Effect.provideService(Path.Path, path),
           Effect.provideService(ProcessRunner.ProcessRunner, runner),
@@ -875,7 +733,6 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
 export const layer = Layer.effect(DeviceHost.DeviceHost, make());
 
 export const __testing = {
-  AgentDeviceDaemonFile,
   androidSdk,
   platformReason,
   deviceHostEnvironment,
