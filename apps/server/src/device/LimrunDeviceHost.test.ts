@@ -1,4 +1,4 @@
-import type { ServeSimAdapterOptions } from "@limrun/api/serve-sim";
+import type { DeviceHostSession } from "@limrun/api/serve-sim-host";
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -32,109 +32,58 @@ const fixture = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const removed: string[] = [];
   const commands: Array<ProcessRunner.ProcessRunInput> = [];
-  const records = new Map<string, LimrunApi.Instance>();
-  const createdModels: string[] = [];
-  const watchRequests: Array<{ key: string; platform: string; id: string }> = [];
-  let refuseWatch = false;
+  const sessions = new Map<string, DeviceHostSession>();
   let sequence = 0;
-  let activeDisplays = ["outer", "inner"];
-  let refuseDelete = false;
-  let loseCreateResponse = false;
-  const slots = new Map<string, LimrunApi.Instance>();
-  let hubOptions: ServeSimAdapterOptions;
   const api = LimrunApi.LimrunApi.of({
-    createHub: (options) => {
-      hubOptions = options;
+    createHost: (key, options) => {
+      expect(key).toBe("organization-key");
+      expect(options.owner.label).toBe("t3code-host");
+      expect(options.hardTimeout).toBe("10m");
       return Effect.succeed({
         origin: "http://127.0.0.1:12345",
         headers: { authorization: "Bearer hub-secret" },
-        close: async () => {},
-        releaseDevice: async () => {},
+        list: async () => [...sessions.values()],
+        open: async (target) => {
+          const id = `${target.platform}_${++sequence}`;
+          const session: DeviceHostSession = {
+            ...target,
+            id,
+            slot: `slot-${sequence}`,
+            instance: {
+              metadata: { id, createdAt: "2026-11-08T00:00:00Z", organizationId: "org_test" },
+              spec: { region: "useb", inactivityTimeout: "2m" },
+              status: { state: "ready" },
+            },
+            agentEnv:
+              target.platform === "ios"
+                ? {
+                    LIM_IOS_INSTANCE_URL: `https://instance.test/${id}`,
+                    LIM_IOS_INSTANCE_TOKEN: `token-${id}`,
+                  }
+                : {
+                    LIM_ANDROID_INSTANCE_URL: `https://instance.test/${id}`,
+                    LIM_ANDROID_INSTANCE_TOKEN: `token-${id}`,
+                    LIM_ANDROID_INSTANCE_ADB_URL: `wss://instance.test/${id}/adb`,
+                  },
+          };
+          sessions.set(id, session);
+          return session;
+        },
+        remove: async (id) => {
+          removed.push(id);
+          sessions.delete(id);
+        },
+        stop: async () => {
+          sessions.clear();
+          return [];
+        },
+        close: async () => {
+          sessions.clear();
+        },
+        screenshot: async () => new Uint8Array(Buffer.from("image")),
+        run: async () => ({ stdout: "", stderr: "", code: 0 }),
       });
     },
-    create: (_key, platform, input) =>
-      Effect.gen(function* () {
-        const existing = slots.get(input.slot);
-        if (existing) return existing;
-        expect(input.hardMinutes).toBe(10);
-        createdModels.push(input.model);
-        const id = `${platform}_${++sequence}`;
-        const instance = {
-          metadata: {
-            id,
-            displayName: "T3",
-            createdAt: "2026-11-07T00:00:00Z",
-            organizationId: "org_test",
-            labels: { "t3code-host": input.owner },
-          },
-          spec: { region: "useb", inactivityTimeout: "2m", model: input.model },
-          status: {
-            state: "ready",
-            apiUrl: `https://region.test/v1/${id}/api`,
-            endpointWebSocketUrl: `wss://region.test/v1/${id}/stream`,
-            token: `token-${id}`,
-            adbWebSocketUrl: `wss://region.test/v1/${id}/adb`,
-          },
-        } as LimrunApi.Instance;
-        records.set(id, instance);
-        slots.set(input.slot, instance);
-        if (loseCreateResponse)
-          return yield* new LimrunApi.LimrunRequestError({
-            operation: "create",
-            cause: "response lost",
-          });
-        return instance;
-      }),
-    watchToken: (key, platform, id) =>
-      Effect.suspend(() => {
-        watchRequests.push({ key, platform, id });
-        return refuseWatch
-          ? Effect.fail(
-              new LimrunApi.LimrunRequestError({
-                operation: "watch token",
-                status: 403,
-                cause: "denied",
-              }),
-            )
-          : Effect.succeed(`watch-${id}`);
-      }),
-    list: () => Effect.succeed([]),
-    get: (_key, _platform, id) => Effect.succeed(records.get(id)!),
-    remove: (_key, _platform, id) =>
-      Effect.suspend(() => {
-        if (refuseDelete)
-          return Effect.fail(
-            new LimrunApi.LimrunRequestError({
-              operation: "delete",
-              status: 503,
-              cause: "offline",
-            }),
-          );
-        removed.push(id);
-        records.delete(id);
-        return Effect.void;
-      }),
-    connect: (instance, platform) =>
-      Effect.succeed({
-        platform,
-        client: {
-          disconnect() {},
-          keepAlive() {},
-          screenshot: async () => {
-            if ("model" in instance.spec && instance.spec.model === "iphone-duo")
-              throw new Error("Multiple Duo displays are active");
-            return { base64: "aW1hZ2U=", dataUri: "data:image/png;base64,aW1hZ2U=" };
-          },
-          getFoldState: async () => ({
-            displays: ["outer", "inner"].map((id) => ({ id, active: activeDisplays.includes(id) })),
-          }),
-          screenshotDisplay: async (display: string) => ({
-            base64: Buffer.from(display).toString("base64"),
-          }),
-          startEventCapture: async () => {},
-          streamEventCapture: () => () => {},
-        },
-      } as unknown as LimrunApi.Runtime),
   });
   const runner = ProcessRunner.ProcessRunner.of({
     run: (input) =>
@@ -179,62 +128,10 @@ const fixture = Effect.gen(function* () {
     }),
   );
   const ready = yield* host.ensureReady(() => Effect.void);
-  return {
-    host,
-    ready,
-    removed,
-    commands,
-    records,
-    createdModels,
-    watchRequests,
-    hubOptions: () => hubOptions,
-    refuseWatch: () => {
-      refuseWatch = true;
-    },
-    setActiveDisplays: (displays: string[]) => {
-      activeDisplays = displays;
-    },
-    loseCreateResponse: () => {
-      loseCreateResponse = true;
-    },
-    setRefuseDelete: (value: boolean) => {
-      refuseDelete = value;
-    },
-  };
+  return { host, ready, removed, commands, sessions };
 });
 
-describe("Limrun device ownership", () => {
-  it.effect(
-    "uses watch credentials only for previews and fails closed when minting is denied",
-    () =>
-      Effect.gen(function* () {
-        const f = yield* fixture;
-        for (const platform of ["ios", "android"] as const) {
-          const device = (yield* f.ready.devices.list).devices.find(
-            (d) => d.platform === platform,
-          )!;
-          const id = yield* f.ready.devices.boot(device);
-          const resolved = yield* Effect.promise(() => f.hubOptions().resolveDevice(id));
-          expect(resolved).toBeDefined();
-          expect(yield* Effect.promise(() => resolved!.token("watch"))).toBe(`watch-${id}`);
-          expect(f.watchRequests.at(-1)).toEqual({ key: "organization-key", platform, id });
-          expect(
-            yield* Effect.promise(() => f.hubOptions().resolveDevice("not-owned")),
-          ).toBeUndefined();
-          yield* f.ready.devices.shutdown({ id, platform });
-        }
-        const device = (yield* f.ready.devices.list).devices[0]!;
-        const id = yield* f.ready.devices.boot(device);
-        f.refuseWatch();
-        const resolved = yield* Effect.promise(() => f.hubOptions().resolveDevice(id));
-        const denied = yield* LimrunApi.request("watch token", () => resolved!.token("watch")).pipe(
-          Effect.result,
-        );
-        expect(denied._tag).toBe("Failure");
-        expect(yield* Effect.promise(() => resolved!.token("stream"))).toBe(`token-${id}`);
-      }).pipe(Effect.scoped, Effect.provide(layer)),
-  );
-
+describe("Limrun host binding", () => {
   it.effect("isolates attached agent credentials and proxies only owned instances", () =>
     Effect.gen(function* () {
       const f = yield* fixture;
@@ -256,9 +153,6 @@ describe("Limrun device ownership", () => {
         headers: { authorization: "Bearer hub-secret" },
         protocols: [],
       });
-      expect(
-        yield* Effect.promise(() => f.hubOptions().resolveDevice("someone-elses-device")),
-      ).toBeUndefined();
       yield* f.host.stopAgent;
       expect(f.removed).toEqual([]);
       expect(f.commands.at(-1)!.args.slice(1, 3)).toEqual(["daemon", "stop"]);
@@ -267,61 +161,23 @@ describe("Limrun device ownership", () => {
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
-  it.effect("provisions the Duo model and retains its identity for viewers and automation", () =>
+  it.effect("retains Duo identity and stops automation when an instance ends externally", () =>
     Effect.gen(function* () {
       const f = yield* fixture;
-      const catalog = (yield* f.ready.devices.list).devices;
-      const device = catalog.find((d) => d.id === "limrun:ios:iphone-duo")!;
-      expect(device).toBeDefined();
-      const id = yield* f.ready.devices.boot(device);
-      expect(f.createdModels).toEqual(["iphone-duo"]);
-      expect((yield* f.ready.devices.list).devices.find((d) => d.id === id)?.name).toBe(
+      const template = (yield* f.ready.devices.list).devices.find(
+        (device) => device.id === "limrun:ios:iphone-duo",
+      )!;
+      const id = yield* f.ready.devices.boot(template);
+      expect((yield* f.ready.devices.list).devices.find((device) => device.id === id)?.name).toBe(
         "iPhone Duo",
       );
-      for (const [active, expected] of [
-        [["outer", "inner"], "outer"],
-        [["inner"], "inner"],
-        [["outer"], "outer"],
-        [[], "outer"],
-      ] as const) {
-        f.setActiveDisplays([...active]);
-        const shot = yield* f.ready.devices.screenshot({ ...device, id, booted: true });
-        expect(Buffer.from(shot).toString()).toBe(expected);
-      }
-      const endpoint = yield* f.ready.devices.agentEndpoint!(id);
-      expect(endpoint.stateDir).toContain("/limrun/cloud/");
+      yield* f.ready.devices.agentEndpoint!(id);
       expect(f.commands[0]!.env!.LIM_IOS_INSTANCE_TOKEN).toBe(`token-${id}`);
-      yield* f.ready.devices.shutdown({ id, platform: "ios" });
-      expect(f.removed).toEqual([id]);
-    }).pipe(Effect.scoped, Effect.provide(layer)),
-  );
-
-  it.effect("reuses an uncertain allocation instead of renting another device", () =>
-    Effect.gen(function* () {
-      const f = yield* fixture;
-      const catalog = (yield* f.ready.devices.list).devices;
-      f.loseCreateResponse();
-      expect((yield* f.ready.devices.boot(catalog[0]!).pipe(Effect.result))._tag).toBe("Failure");
-      expect(f.records.size).toBe(1);
-      expect((yield* f.ready.devices.boot(catalog[2]!).pipe(Effect.result))._tag).toBe("Failure");
-      expect(yield* f.ready.devices.boot(catalog[0]!)).toBe([...f.records.keys()][0]);
-      expect(f.records.size).toBe(1);
-    }).pipe(Effect.scoped, Effect.provide(layer)),
-  );
-
-  it.effect("keeps failed deletions inside the concurrency limit and allows retry", () =>
-    Effect.gen(function* () {
-      const f = yield* fixture;
-      const device = (yield* f.ready.devices.list).devices[0]!;
-      const id = yield* f.ready.devices.boot(device);
-      f.setRefuseDelete(true);
-      expect(
-        (yield* f.ready.devices.shutdown({ id, platform: "ios" }).pipe(Effect.result))._tag,
-      ).toBe("Failure");
-      expect((yield* f.ready.devices.boot(device).pipe(Effect.result))._tag).toBe("Failure");
-      f.setRefuseDelete(false);
-      yield* f.ready.devices.shutdown({ id, platform: "ios" });
-      expect(yield* f.ready.devices.boot(device)).not.toBe(id);
+      f.sessions.delete(id);
+      expect((yield* f.ready.devices.list).devices.some((device) => device.id === id)).toBe(false);
+      expect(f.commands.at(-1)!.args.slice(1, 3)).toEqual(["daemon", "stop"]);
+      expect(f.removed).toEqual([]);
+      expect((yield* f.ready.devices.agentEndpoint!(id).pipe(Effect.result))._tag).toBe("Failure");
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 });

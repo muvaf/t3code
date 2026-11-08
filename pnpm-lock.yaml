@@ -867,8 +867,8 @@ importers:
         specifier: 0.11.0
         version: 0.11.0(patch_hash=cc71fcec015f4d39bc96ae2e2bf6b0ca678124c722c66a7841efce9d34b5983c)
       '@limrun/api':
-        specifier: github:limrun-inc/typescript-sdk#c8fefe043bcbe9b4abffce1c9f926a47284147e4
-        version: https://codeload.github.com/limrun-inc/typescript-sdk/tar.gz/c8fefe043bcbe9b4abffce1c9f926a47284147e4(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6)
+        specifier: github:limrun-inc/typescript-sdk#c1efaca67d7cf0748b487b9cdf59d8584d40a1f5
+        version: https://codeload.github.com/limrun-inc/typescript-sdk/tar.gz/c1efaca67d7cf0748b487b9cdf59d8584d40a1f5(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6)
       '@muse-code/sdk':
         specifier: 1.4.6
         version: 1.4.6(patch_hash=7b495b607fc5d76b444c7c4d58821e839726a30e6f3c53564f0d59f2d5b42101)(@types/node@24.12.4)
@@ -4944,8 +4944,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@limrun/api@https://codeload.github.com/limrun-inc/typescript-sdk/tar.gz/c8fefe043bcbe9b4abffce1c9f926a47284147e4':
-    resolution: {gitHosted: true, integrity: sha512-ZYQcrNgvIRzp+6otzRZNyv1CNaRgYyvuLvVIsQlqvqIUNKQunwaWfKEvpwzHNte2zBvfCAv9sgTwJ6owa8r9CA==, tarball: https://codeload.github.com/limrun-inc/typescript-sdk/tar.gz/c8fefe043bcbe9b4abffce1c9f926a47284147e4}
+  '@limrun/api@https://codeload.github.com/limrun-inc/typescript-sdk/tar.gz/c1efaca67d7cf0748b487b9cdf59d8584d40a1f5':
+    resolution: {gitHosted: true, integrity: sha512-7XkXkDXjtJnrGnm3QK49PPx/iBVBQsWF+BpQ9xbkA/s/zkoY9Ei4jB3itD8zov5kvib0G7XeRtDFG0MwnEBA/Q==, tarball: https://codeload.github.com/limrun-inc/typescript-sdk/tar.gz/c1efaca67d7cf0748b487b9cdf59d8584d40a1f5}
     version: 0.69.4
     engines: {node: '>=20.18.1'}
 
@@ -15020,7 +15020,7 @@ snapshots:
   '@libsql/win32-x64-msvc@0.5.29':
     optional: true
 
-  '@limrun/api@https://codeload.github.com/limrun-inc/typescript-sdk/tar.gz/c8fefe043bcbe9b4abffce1c9f926a47284147e4(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6)':
+  '@limrun/api@https://codeload.github.com/limrun-inc/typescript-sdk/tar.gz/c1efaca67d7cf0748b487b9cdf59d8584d40a1f5(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6)':
     dependencies:
       '@limrun/xdelta3-wasm': 0.2.0
       '@types/har-format': 1.2.16

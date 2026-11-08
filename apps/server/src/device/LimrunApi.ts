@@ -1,12 +1,13 @@
 import Limrun from "@limrun/api";
-import { createServeSimAdapter, type ServeSimAdapterOptions } from "@limrun/api/serve-sim";
-import { createInstanceClient as createIosClient } from "@limrun/api/ios-client";
-import { createInstanceClient as createAndroidClient } from "@limrun/api/instance-client";
+import { createServeSimHost, type ServeSimHostOptions } from "@limrun/api/serve-sim-host";
+import * as Logger from "effect/Logger";
+import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import type { DevicePlatform } from "@t3tools/contracts";
 
 export class LimrunRequestError extends Schema.TaggedError<LimrunRequestError>()(
   "LimrunRequestError",
@@ -20,12 +21,7 @@ export class LimrunRequestError extends Schema.TaggedError<LimrunRequestError>()
     return `Limrun ${this.operation} failed${this.status === undefined ? "" : ` (HTTP ${this.status})`}.`;
   }
 }
-
-export type Instance = Limrun.IosInstance | Limrun.AndroidInstance;
-export type Runtime =
-  | { platform: "ios"; client: Awaited<ReturnType<typeof createIosClient>> }
-  | { platform: "android"; client: Awaited<ReturnType<typeof createAndroidClient>> };
-
+export type Host = Awaited<ReturnType<typeof createServeSimHost>>;
 export const request = <A>(operation: string, run: (signal: AbortSignal) => Promise<A>) =>
   Effect.tryPromise({
     try: run,
@@ -42,143 +38,40 @@ export const request = <A>(operation: string, run: (signal: AbortSignal) => Prom
 export class LimrunApi extends Context.Service<
   LimrunApi,
   {
-    readonly createHub: (
-      options: ServeSimAdapterOptions,
-    ) => Effect.Effect<Awaited<ReturnType<typeof createServeSimAdapter>>, LimrunRequestError>;
-    readonly create: (
+    readonly createHost: (
       key: string,
-      platform: DevicePlatform,
-      input: {
-        owner: string;
-        slot: string;
-        region: string;
-        model: string;
-        hardMinutes: number;
-        idleMinutes: number;
-      },
-    ) => Effect.Effect<Instance, LimrunRequestError>;
-    readonly get: (
-      key: string,
-      platform: DevicePlatform,
-      id: string,
-    ) => Effect.Effect<Instance, LimrunRequestError>;
-    readonly list: (
-      key: string,
-      platform: DevicePlatform,
-      owner: string,
-    ) => Effect.Effect<ReadonlyArray<Instance>, LimrunRequestError>;
-    readonly remove: (
-      key: string,
-      platform: DevicePlatform,
-      id: string,
-    ) => Effect.Effect<void, LimrunRequestError>;
-    readonly watchToken: (
-      key: string,
-      platform: DevicePlatform,
-      id: string,
-    ) => Effect.Effect<string, LimrunRequestError>;
-    readonly connect: (
-      instance: Instance,
-      platform: DevicePlatform,
-    ) => Effect.Effect<Runtime, LimrunRequestError>;
+      options: Omit<ServeSimHostOptions, "client" | "onError">,
+    ) => Effect.Effect<Host, LimrunRequestError>;
   }
 >()("t3/device/LimrunApi") {}
 
-const client = (apiKey: string) =>
-  new Limrun({ apiKey, maxRetries: 0, defaultHeaders: { "User-Agent": "t3code/limrun" } });
 export const layer = Layer.succeed(
   LimrunApi,
   LimrunApi.of({
-    createHub: Effect.fn("LimrunApi.createHub")((options) =>
-      request("create compatibility hub", () => createServeSimAdapter(options)),
-    ),
-    create: Effect.fn("LimrunApi.create")((key, platform, input) =>
-      request("create", async (signal) => {
-        const params = {
-          wait: false,
-          reuseIfExists: true,
-          metadata: {
-            displayName: "T3 Code",
-            labels: { "t3code-host": input.owner, "t3code-slot": input.slot },
+    createHost: Effect.fn("LimrunApi.createHost")(function* (apiKey, options) {
+      const loggers = yield* Logger.CurrentLoggers;
+      const clock = yield* Clock.Clock;
+      const fiber = yield* Effect.withFiber(Effect.succeed);
+      return yield* request("create host", () =>
+        createServeSimHost({
+          ...options,
+          client: new Limrun({
+            apiKey,
+            maxRetries: 0,
+            defaultHeaders: { "User-Agent": "t3code/limrun" },
+          }),
+          onError: (operation, deviceId) => {
+            for (const logger of loggers)
+              logger.log({
+                message: ["Limrun cleanup failed", { operation, deviceId }],
+                logLevel: "Warn",
+                cause: Cause.empty,
+                fiber,
+                date: DateTime.toDateUtc(DateTime.makeUnsafe(clock.currentTimeMillisUnsafe())),
+              });
           },
-          spec: {
-            ...(input.region ? { region: input.region } : {}),
-            hardTimeout: `${input.hardMinutes}m`,
-            inactivityTimeout: `${input.idleMinutes}m`,
-          },
-        };
-        return platform === "ios"
-          ? client(key).iosInstances.create(
-              {
-                ...params,
-                spec: { ...params.spec, model: input.model as "iphone" | "iphone-duo" | "ipad" },
-              },
-              { signal },
-            )
-          : client(key).androidInstances.create(
-              { ...params, spec: { ...params.spec, model: input.model as "phone" | "tablet" } },
-              { signal },
-            );
-      }),
-    ),
-    get: Effect.fn("LimrunApi.get")((key, platform, id) =>
-      request("get", (signal) =>
-        platform === "ios"
-          ? client(key).iosInstances.get(id, { signal })
-          : client(key).androidInstances.get(id, { signal }),
-      ),
-    ),
-    list: Effect.fn("LimrunApi.list")((key, platform, owner) =>
-      request("list", async (signal) => {
-        const params = { labelSelector: `t3code-host=${owner}`, state: "creating,assigned,ready" };
-        const items: Instance[] = [];
-        const pages =
-          platform === "ios"
-            ? client(key).iosInstances.list(params, { signal })
-            : client(key).androidInstances.list(params, { signal });
-        for await (const item of pages) items.push(item);
-        return items;
-      }),
-    ),
-    remove: Effect.fn("LimrunApi.remove")((key, platform, id) =>
-      request("delete", (signal) =>
-        platform === "ios"
-          ? client(key).iosInstances.delete(id, { signal })
-          : client(key).androidInstances.delete(id, { signal }),
-      ).pipe(
-        Effect.catchTags({
-          LimrunRequestError: (error) => (error.status === 404 ? Effect.void : Effect.fail(error)),
         }),
-      ),
-    ),
-    watchToken: Effect.fn("LimrunApi.watchToken")((key, platform, id) =>
-      request("watch token", async (signal) => {
-        const result = await client(key).accessTokens.create(
-          { permissions: [`${platform}:${id}:watch`], ttlSeconds: 300 },
-          { signal },
-        );
-        return result.token;
-      }),
-    ),
-    connect: Effect.fn("LimrunApi.connect")((instance, platform) =>
-      request("connect", async () => {
-        const options = {
-          apiUrl: instance.status.apiUrl!,
-          token: instance.status.token!,
-          logLevel: "none" as const,
-        };
-        return platform === "ios"
-          ? { platform, client: await createIosClient(options) }
-          : {
-              platform,
-              client: await createAndroidClient({
-                ...options,
-                ...((instance as Limrun.AndroidInstance).status.adbWebSocketUrl
-                  ? { adbUrl: (instance as Limrun.AndroidInstance).status.adbWebSocketUrl! }
-                  : {}),
-              }),
-            };
-      }),
-    ),
+      );
+    }),
   }),
 );

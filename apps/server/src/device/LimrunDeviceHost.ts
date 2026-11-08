@@ -3,9 +3,9 @@ import {
   DeviceHostUnavailableError,
   DeviceOperationError,
   type DeviceHostSummary,
-  type DevicePlatform,
   type LimrunDeviceHostConfig,
 } from "@t3tools/contracts";
+import type { DeviceHostSession } from "@limrun/api/serve-sim-host";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -64,18 +64,15 @@ const catalog: ReadonlyArray<DeviceHost.HostDevice> = [
     physical: false,
   },
 ];
+
 const decodeDaemon = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Struct({ httpPort: Schema.Int, token: Schema.String })),
 );
 interface Running {
-  instance: LimrunApi.Instance;
-  platform: DevicePlatform;
-  device: DeviceHost.HostDevice;
-  key: string;
+  session: DeviceHostSession;
+  platform: DeviceHostSession["platform"];
   dir: string;
-  session: string;
   cwd: string;
-  runtime?: LimrunApi.Runtime;
   endpoint?: DeviceHost.AgentDeviceBinding;
 }
 
@@ -96,35 +93,9 @@ export const make = Effect.fn("LimrunDeviceHost.make")(function* (
   const renewals = yield* FiberMap.make<string>();
   const live = new Map<string, Running>();
   const directory = path.join(server.stateDir, "device", "limrun", config.id);
-  const context = yield* Effect.context<never>();
-  const hub = yield* Effect.acquireRelease(
-    api.createHub({
-      resolveDevice: async (id) => {
-        const item = live.get(id);
-        if (
-          !item?.instance.status.endpointWebSocketUrl ||
-          !item.instance.status.token ||
-          !item.instance.status.apiUrl
-        )
-          return undefined;
-        return {
-          platform: item.platform,
-          endpoint: item.instance.status.endpointWebSocketUrl,
-          apiUrl: item.instance.status.apiUrl,
-          token: (grant) =>
-            grant === "watch"
-              ? Effect.runPromiseWith(context)(api.watchToken(item.key, item.platform, id))
-              : Promise.resolve(item.instance.status.token!),
-        };
-      },
-    }),
-    (hub) => Effect.promise(() => hub.close()),
-  );
-  let owner: string | undefined;
+  let hub: LimrunApi.Host | undefined;
   let ready: DeviceHost.DeviceHostReady | null = null;
   let cli: { nodePath: string; entryPath: string } | undefined;
-  // A lost create response must reuse the same allocation, not rent a second device on retry.
-  let pending: { templateId: string; slot: string } | undefined;
   const unavailable = (reason: string, cause?: unknown) =>
     new DeviceHostUnavailableError({
       hostId: config.id,
@@ -134,7 +105,20 @@ export const make = Effect.fn("LimrunDeviceHost.make")(function* (
     });
   const failed = (operation: string) => (cause: unknown) =>
     new DeviceOperationError({ operation, reason: "request_failed", cause });
-  const credential = Effect.gen(function* () {
+  const initialize = Effect.gen(function* () {
+    if (hub) return hub;
+    yield* fs.makeDirectory(directory, { recursive: true });
+    const file = path.join(directory, "owner");
+    const saved = yield* fs.readFileString(file).pipe(
+      Effect.catchIf(
+        (error) => error.reason._tag === "NotFound",
+        () => Effect.succeed(""),
+      ),
+    );
+    const identity =
+      saved.trim() ||
+      `${yield* Random.nextIntBetween(0, 0x7fffffff)}-${yield* Random.nextIntBetween(0, 0x7fffffff)}`;
+    if (!saved) yield* fs.writeFileString(file, identity, { mode: 0o600 });
     const key = config.apiKey
       ? yield* requireSettingsSecret(secrets, config.apiKey)
       : environment.LIMRUN_API_KEY;
@@ -142,7 +126,16 @@ export const make = Effect.fn("LimrunDeviceHost.make")(function* (
       return yield* unavailable(
         "Add a Limrun API key in Settings or set LIMRUN_API_KEY on the T3 server.",
       );
-    return key;
+    hub = yield* api.createHost(key, {
+      owner: { label: "t3code-host", value: identity },
+      allocationLabel: "t3code-slot",
+      displayName: "T3 Code",
+      region: config.region,
+      hardTimeout: `${config.maxSessionMinutes}m`,
+      inactivityTimeout: `${config.idleMinutes}m`,
+      maxConcurrentSessions: config.maxConcurrentSessions,
+    });
+    return hub;
   });
   const agentEnv = (item: Running): NodeJS.ProcessEnv => ({
     ...Object.fromEntries(
@@ -155,19 +148,7 @@ export const make = Effect.fn("LimrunDeviceHost.make")(function* (
     AGENT_DEVICE_DAEMON_SERVER_MODE: "http",
     AGENT_DEVICE_DAEMON_IDLE_TIMEOUT_MS: "0",
     AGENT_DEVICE_NO_UPDATE_NOTIFIER: "1",
-    ...(item.platform === "ios"
-      ? {
-          LIM_IOS_INSTANCE_URL: item.instance.status.apiUrl!,
-          LIM_IOS_INSTANCE_TOKEN: item.instance.status.token!,
-        }
-      : {
-          LIM_ANDROID_INSTANCE_URL: item.instance.status.apiUrl!,
-          LIM_ANDROID_INSTANCE_TOKEN: item.instance.status.token!,
-          LIM_ANDROID_INSTANCE_ADB_URL:
-            "adbWebSocketUrl" in item.instance.status
-              ? item.instance.status.adbWebSocketUrl
-              : undefined,
-        }),
+    ...item.session.agentEnv,
   });
   const agent = Effect.fn("LimrunDeviceHost.agent")(function* (
     item: Running,
@@ -179,7 +160,7 @@ export const make = Effect.fn("LimrunDeviceHost.make")(function* (
       args: [
         cli.entryPath,
         ...args,
-        ...(args[0] === "daemon" ? [] : ["--session", item.session]),
+        ...(args[0] === "daemon" ? [] : ["--session", `t3-${item.session.slot}`]),
         "--json",
       ],
       cwd: item.cwd,
@@ -198,7 +179,7 @@ export const make = Effect.fn("LimrunDeviceHost.make")(function* (
     ).pipe(
       Effect.tapError(() =>
         Effect.logWarning("Could not stop Limrun agent daemon", {
-          deviceId: item.instance.metadata.id,
+          deviceId: item.session.id,
         }),
       ),
       Effect.ignore,
@@ -208,20 +189,6 @@ export const make = Effect.fn("LimrunDeviceHost.make")(function* (
         }),
       ),
     );
-  const remove = Effect.fn("LimrunDeviceHost.remove")(function* (item: Running) {
-    // Keep failed deletions tracked: a retry must not silently exceed the host's instance limit.
-    yield* api.remove(item.key, item.platform, item.instance.metadata.id);
-    yield* stopDaemon(item);
-    item.runtime?.client.disconnect();
-    yield* Effect.promise(() => hub.releaseDevice(item.instance.metadata.id));
-    live.delete(item.instance.metadata.id);
-  });
-  const runtime = Effect.fn("LimrunDeviceHost.runtime")(function* (item: Running) {
-    if (!item.runtime) {
-      item.runtime = yield* api.connect(item.instance, item.platform);
-    }
-    return item.runtime;
-  });
   const startAgent = Effect.fn("LimrunDeviceHost.startAgent")(function* (item: Running) {
     if (item.endpoint) return item.endpoint;
     if (!cli) cli = yield* agentCli;
@@ -235,206 +202,110 @@ export const make = Effect.fn("LimrunDeviceHost.make")(function* (
       baseUrl: `http://127.0.0.1:${daemon.httpPort}`,
       token: daemon.token,
       agentDeviceId: null,
-      session: item.session,
+      session: `t3-${item.session.slot}`,
       stateDir: item.dir,
       installDirectory: item.cwd,
     };
     return item.endpoint;
   });
-  const initialize = Effect.gen(function* () {
-    if (owner) return;
-    yield* fs.makeDirectory(directory, { recursive: true });
-    const file = path.join(directory, "owner");
-    const saved = yield* fs.readFileString(file).pipe(
-      Effect.catchIf(
-        (error) => error.reason._tag === "NotFound",
-        () => Effect.succeed(""),
-      ),
-    );
-    const identity =
-      saved.trim() ||
-      `${yield* Random.nextIntBetween(0, 0x7fffffff)}-${yield* Random.nextIntBetween(0, 0x7fffffff)}`;
-    if (!saved) yield* fs.writeFileString(file, identity, { mode: 0o600 });
-    const key = yield* credential;
-    // Recover only this T3 installation's instances. An API key can belong to many installations.
-    for (const platform of ["ios", "android"] as const) {
-      for (const instance of yield* api.list(key, platform, identity))
-        yield* api.remove(key, platform, instance.metadata.id);
-    }
-    owner = identity;
-  });
-  const open = Effect.fn("LimrunDeviceHost.open")(function* (
-    device: DeviceHost.HostDevice,
-    context?: DeviceHost.DeviceOpenContext,
-  ) {
-    if (live.has(device.id)) return device.id;
-    if (!catalog.some((candidate) => candidate.id === device.id))
-      return yield* unavailable("This Limrun instance has ended. Open a new device from the list.");
-    yield* initialize;
-    if (pending && pending.templateId !== device.id)
-      return yield* unavailable(
-        "Retry the previous Limrun device first; its allocation could not be confirmed.",
-      );
-    if (live.size >= config.maxConcurrentSessions)
-      return yield* unavailable(
-        `Close a Limrun device first; ${config.label} allows ${config.maxConcurrentSessions} at once.`,
-      );
-    const key = yield* credential;
-    const slot =
-      pending?.slot ??
-      `${yield* Random.nextIntBetween(0, 0x7fffffff)}-${yield* Random.nextIntBetween(0, 0x7fffffff)}`;
-    pending = { templateId: device.id, slot };
-    const item = yield* Effect.uninterruptible(
-      Effect.gen(function* () {
-        const instance = yield* api
-          .create(key, device.platform, {
-            owner: owner!,
-            slot,
-            region: config.region,
-            model: device.id.split(":")[2]!,
-            hardMinutes: config.maxSessionMinutes,
-            idleMinutes: config.idleMinutes,
-          })
-          .pipe(
-            Effect.tapError((error) =>
-              Effect.sync(() => {
-                if (
-                  error.status !== undefined &&
-                  error.status >= 400 &&
-                  error.status < 500 &&
-                  error.status !== 408
-                )
-                  pending = undefined;
-              }),
-            ),
-          );
-        const id = instance.metadata.id;
-        const dir = path.join(directory, slot);
-        const item: Running = {
-          instance,
-          platform: device.platform,
-          key,
-          device: { ...device, id, booted: true },
-          dir,
-          session: `t3-${slot}`,
-          cwd: context?.workspaceRoot ?? directory,
-        };
-        live.set(id, item);
-        pending = undefined;
-        return item;
-      }),
-    );
-    return yield* Effect.gen(function* () {
-      while (item.instance.status.state !== "ready") {
-        if (item.instance.status.state === "terminated")
-          return yield* unavailable("Limrun could not start this device.");
-        yield* Effect.sleep("1 second");
-        item.instance = yield* api.get(key, item.platform, item.instance.metadata.id);
-      }
-      if (
-        !item.instance.status.token ||
-        !item.instance.status.apiUrl ||
-        !item.instance.status.endpointWebSocketUrl
-      )
-        return yield* unavailable("The Limrun API key needs full control of devices.");
-      const connected = yield* runtime(item);
-      yield* FiberMap.run(
-        renewals,
-        item.instance.metadata.id,
-        Effect.gen(function* () {
-          while (true) {
-            yield* Effect.sleep("30 seconds");
-            connected.client.keepAlive();
-            if (item.endpoint)
-              yield* agent(item, ["boot", "--platform", item.platform]).pipe(
-                Effect.tapError(() =>
-                  Effect.logWarning("Could not renew Limrun automation session", {
-                    deviceId: item.instance.metadata.id,
-                  }),
-                ),
-                Effect.ignore,
-              );
-          }
-        }),
-      );
-      return item.instance.metadata.id;
-    }).pipe(
-      Effect.timeout("5 minutes"),
-      Effect.onExit((exit) =>
-        exit._tag === "Success"
-          ? Effect.void
-          : remove(item).pipe(
-              Effect.tapError(() =>
-                Effect.logWarning("Could not clean up failed Limrun device", {
-                  deviceId: item.instance.metadata.id,
-                }),
-              ),
-              Effect.ignore,
-            ),
-      ),
-    );
+
+  const releaseAgent = Effect.fn("LimrunDeviceHost.releaseAgent")(function* (id: string) {
+    yield* FiberMap.remove(renewals, id);
+    const item = live.get(id);
+    if (item) yield* stopDaemon(item);
+    live.delete(id);
   });
   const devices: DeviceHost.DeviceOperations = {
     list: lock
       .withPermit(
         Effect.gen(function* () {
-          yield* initialize;
-          for (const item of live.values()) {
-            const state = yield* api.get(item.key, item.platform, item.instance.metadata.id).pipe(
-              Effect.catchTags({
-                LimrunRequestError: (error) =>
-                  error.status === 404 ? Effect.succeed(null) : Effect.fail(error),
-              }),
-            );
-            if (state === null || state.status.state === "terminated") {
-              yield* FiberMap.remove(renewals, item.instance.metadata.id);
-              yield* stopDaemon(item);
-              item.runtime?.client.disconnect();
-              yield* Effect.promise(() => hub.releaseDevice(item.instance.metadata.id));
-              live.delete(item.instance.metadata.id);
-            }
-          }
+          const host = yield* initialize;
+          const sessions = yield* LimrunApi.request("list", () => host.list());
+          const ids = new Set(sessions.map((session) => session.id));
+          for (const id of live.keys()) if (!ids.has(id)) yield* releaseAgent(id);
           return {
-            devices: [...catalog, ...[...live.values()].map((item) => item.device)],
+            devices: [
+              ...catalog,
+              ...sessions.map((session) => ({
+                ...catalog.find(
+                  (device) => device.id === `limrun:${session.platform}:${session.model}`,
+                )!,
+                id: session.id,
+                booted: true,
+              })),
+            ],
             detail: undefined,
           };
         }),
       )
       .pipe(Effect.mapError(failed("list"))),
     boot: (device, context) =>
-      lock.withPermit(open(device, context)).pipe(Effect.mapError(failed("boot"))),
+      lock
+        .withPermit(
+          Effect.gen(function* () {
+            if (live.has(device.id)) return device.id;
+            const template = catalog.find((candidate) => candidate.id === device.id);
+            if (!template)
+              return yield* unavailable(
+                "This Limrun instance has ended. Open a new device from the list.",
+              );
+            const host = yield* initialize;
+            const model = template.id.split(":")[2]!;
+            const session = yield* LimrunApi.request("create", (signal) =>
+              host.open(
+                template.platform === "ios"
+                  ? { platform: "ios", model: model as "iphone" | "ipad" | "iphone-duo" }
+                  : { platform: "android", model: model as "phone" | "tablet" },
+                signal,
+              ),
+            );
+            const item: Running = {
+              session,
+              platform: session.platform,
+              dir: path.join(directory, session.slot),
+              cwd: context?.workspaceRoot ?? directory,
+            };
+            live.set(session.id, item);
+            yield* FiberMap.run(
+              renewals,
+              session.id,
+              Effect.gen(function* () {
+                while (true) {
+                  yield* Effect.sleep("30 seconds");
+                  if (item.endpoint)
+                    yield* agent(item, ["boot", "--platform", item.platform]).pipe(
+                      Effect.tapError(() =>
+                        Effect.logWarning("Could not renew Limrun automation session", {
+                          deviceId: session.id,
+                        }),
+                      ),
+                      Effect.ignore,
+                    );
+                }
+              }),
+            );
+            return session.id;
+          }),
+        )
+        .pipe(Effect.mapError(failed("boot"))),
     attach: (device) =>
       live.has(device.id) ? Effect.void : Effect.fail(failed("attach")("Instance has ended")),
     shutdown: (device) =>
       lock
         .withPermit(
           Effect.gen(function* () {
-            const item = live.get(device.id);
-            if (!item) return;
-            yield* FiberMap.remove(renewals, device.id);
-            yield* remove(item);
+            if (hub) yield* LimrunApi.request("delete", () => hub!.remove(device.id));
+            yield* releaseAgent(device.id);
           }),
         )
         .pipe(Effect.mapError(failed("shutdown"))),
     screenshot: Effect.fn("LimrunDeviceHost.screenshot")(
-      function* (device) {
-        const item = live.get(device.id);
-        if (!item) return yield* unavailable("Instance has ended.");
-        const connected = yield* runtime(item);
-        const shot = yield* LimrunApi.request("screenshot", async () => {
-          if (connected.platform === "android")
-            return (await connected.client.screenshot()).dataUri.split(",")[1]!;
-          if ("model" in item.instance.spec && item.instance.spec.model === "iphone-duo") {
-            const fold = await connected.client.getFoldState();
-            const active = fold?.displays.filter((display) => display.active) ?? [];
-            // Folding can activate both panels; the primary stream shows the outer display.
-            const display = active.length === 1 ? active[0]!.id : "outer";
-            return (await connected.client.screenshotDisplay(display, { format: "png" })).base64;
-          }
-          return (await connected.client.screenshot({ format: "png" })).base64;
-        });
-        return new Uint8Array(Buffer.from(shot, "base64"));
-      },
+      (device) =>
+        initialize.pipe(
+          Effect.flatMap((host) =>
+            LimrunApi.request("screenshot", () => host.screenshot(device.id)),
+          ),
+        ),
       Effect.mapError(failed("screenshot")),
     ),
     agentEndpoint: (deviceId) =>
@@ -457,73 +328,53 @@ export const make = Effect.fn("LimrunDeviceHost.make")(function* (
     (command, args, options) =>
       Effect.gen(function* () {
         const id = command === "xcrun" ? args[2] : args[1];
-        const item = id ? live.get(id) : undefined;
-        if (!item) return { stdout: "", stderr: "Limrun instance not found", code: 1 };
-        const connected = yield* runtime(item);
-        return yield* LimrunApi.request("device command", async () => {
-          if (command === "xcrun" && args[0] === "simctl" && connected.platform === "ios") {
-            const execution = connected.client.simctl(
-              [args[1]!, "booted", ...args.slice(3)],
-              options?.stdin === undefined ? {} : { stdin: options.stdin },
-            );
-            const result = await execution.wait();
-            return {
-              stdout: result.stdout.toString(),
-              stderr: result.stderr.toString(),
-              code: result.code,
-            };
-          }
-          if (
-            command === "adb" &&
-            args[0] === "-s" &&
-            args[2] === "shell" &&
-            connected.platform === "android"
-          ) {
-            const result = await connected.client.adbShell("sh", ["-c", args.slice(3).join(" ")]);
-            return { stdout: result.stdout, stderr: result.stderr, code: result.exitCode };
-          }
-          return { stdout: "", stderr: "This command is unavailable on Limrun.", code: 127 };
-        });
+        if (!hub || !id) return { stdout: "", stderr: "Limrun instance not found", code: 1 };
+        return yield* LimrunApi.request("device command", () =>
+          hub!.run(id, command, args, options),
+        );
       }).pipe(
         Effect.timeout(`${options?.timeoutMs ?? 30000} millis`),
         Effect.orElseSucceed(() => ({ stdout: "", stderr: "Limrun command failed", code: 1 })),
       ),
   );
-  const stopAll = lock.withPermit(
+  const stopAll = lock
+    .withPermit(
+      Effect.gen(function* () {
+        if (!hub) return;
+        const remaining = new Set(
+          (yield* LimrunApi.request("stop", () => hub!.stop())).map((session) => session.id),
+        );
+        for (const id of live.keys()) if (!remaining.has(id)) yield* releaseAgent(id);
+      }),
+    )
+    .pipe(Effect.orDie);
+  yield* Effect.addFinalizer(() =>
     Effect.gen(function* () {
       yield* FiberMap.clear(renewals);
-      for (const item of live.values())
-        yield* remove(item).pipe(
-          Effect.tapError(() =>
-            Effect.logWarning(
-              "Could not terminate Limrun instance; its hard timeout remains active",
-              { deviceId: item.instance.metadata.id },
-            ),
-          ),
-          Effect.ignore,
-        );
+      for (const item of live.values()) yield* stopDaemon(item);
+      if (hub) yield* Effect.promise(() => hub!.close());
     }),
   );
-  yield* Effect.addFinalizer(() => stopAll);
   const ensureReady: DeviceHost.DeviceHost["Service"]["ensureReady"] = (onPhase) =>
     lock
       .withPermit(
         Effect.gen(function* () {
           if (ready) return ready;
           yield* onPhase("starting", "Connecting to Limrun");
+          const host = yield* initialize;
           const nodePath = yield* resolveNodeExecutable("Device automation").pipe(
             Effect.provide(nodeContext),
           );
           ready = {
             nodePath,
-            hub: { origin: hub.origin },
+            hub: { origin: host.origin },
             devices,
             run,
             helpers: { serveSimAxSettings: null, serveSimCli: null },
             upstream: (route, search) =>
               Effect.succeed({
-                url: `${hub.origin}${route}${search.size ? `?${search}` : ""}`,
-                headers: hub.headers,
+                url: `${host.origin}${route}${search.size ? `?${search}` : ""}`,
+                headers: host.headers,
                 protocols: [],
               }),
           };

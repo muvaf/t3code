@@ -607,8 +607,6 @@ function PermissionsSection(props: {
 function EventLogSection(props: {
   readonly access: DeviceHubAccess;
   readonly device: DeviceSummary;
-  readonly supportsLocation?: boolean;
-  readonly supportsOrientation?: boolean;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -631,8 +629,6 @@ function EventLogSection(props: {
 function EventLogEntries(props: {
   readonly access: DeviceHubAccess;
   readonly device: DeviceSummary;
-  readonly supportsLocation?: boolean;
-  readonly supportsOrientation?: boolean;
 }) {
   const entries = useAtomValue(
     deviceEventLogAtom({
