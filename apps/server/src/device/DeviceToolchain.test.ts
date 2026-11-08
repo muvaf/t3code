@@ -11,8 +11,6 @@ import {
   deviceToolVersions,
   DEVICE_HUB_VERSION,
   ensureDeviceHub,
-  ensureAgentDevice,
-  isAgentDeviceInstalled,
   isDeviceHubInstalled,
 } from "./DeviceToolchain.ts";
 
@@ -98,41 +96,4 @@ it.effect("unreadable inventory stays unknown instead of reporting no installs",
     ),
     Effect.provide(NodeServices.layer),
   ),
-);
-
-it.effect("does not publish a main build when its native helper packaging fails", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const base = yield* fs.makeTempDirectoryScoped();
-    let source = "";
-    const error = yield* ensureAgentDevice(base).pipe(
-      Effect.provideService(ProcessRunner.ProcessRunner, {
-        run: (input) =>
-          Effect.gen(function* () {
-            if (input.args[0] === "clone") source = input.args.at(-1)!;
-            if (input.args[0] === "build") {
-              yield* fs.makeDirectory(path.join(source, "bin"), { recursive: true });
-              yield* fs.writeFileString(path.join(source, "bin/agent-device.mjs"), "built");
-            }
-            return {
-              code: ChildProcessSpawner.ExitCode(
-                input.args[0] === "prepare:publish-assets" ? 1 : 0,
-              ),
-              stdout: "",
-              stderr: "native build failed",
-              timedOut: false,
-              stdoutTruncated: false,
-              stderrTruncated: false,
-              stdoutInvalidUtf8: false,
-              stderrInvalidUtf8: false,
-            };
-          }).pipe(Effect.orDie),
-      }),
-      Effect.flip,
-    );
-    expect(error.step).toBe("building pinned agent-device main");
-    expect(yield* isAgentDeviceInstalled(base)).toBe(false);
-    expect(yield* fs.readDirectory(path.join(base, "tools/agent-device"))).toEqual([]);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

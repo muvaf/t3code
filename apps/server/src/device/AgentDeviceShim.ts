@@ -12,7 +12,7 @@ const STALE_RUNTIME =
 
 const quoteShell = (value: string) => "'" + value.replaceAll("'", "'\"'\"'") + "'";
 
-/** Pinned agent-device main's flags that take a value, so the launcher can find the command past them. */
+/** agent-device 0.21.31's flags that take a value, so the launcher can find the command past them. */
 const VALUE_FLAGS: ReadonlyArray<string> = [
   "--activity",
   "--all",
@@ -26,15 +26,16 @@ const VALUE_FLAGS: ReadonlyArray<string> = [
   "--aws-interaction-mode",
   "--aws-project-arn",
   "--aws-region",
+  "-b",
   "--baseline",
   "--bearer-token",
   "--bundle-url",
   "--button",
-  "--capture-backend",
   "--config",
   "--count",
   "--crop-on",
   "--custom-network",
+  "-d",
   "--daemon-auth-token",
   "--daemon-base-url",
   "--daemon-server-mode",
@@ -42,11 +43,9 @@ const VALUE_FLAGS: ReadonlyArray<string> = [
   "--delay-ms",
   "--depth",
   "--device",
-  "--device-mode",
   "--device-orientation",
   "--dsym",
   "--duration-ms",
-  "--env",
   "--fps",
   "--from",
   "--geo-location",
@@ -54,7 +53,6 @@ const VALUE_FLAGS: ReadonlyArray<string> = [
   "--header",
   "--hold-ms",
   "--host",
-  "--image-tag",
   "--in-app",
   "--include",
   "--interval-ms",
@@ -81,12 +79,10 @@ const VALUE_FLAGS: ReadonlyArray<string> = [
   "--metro-port",
   "--network-profile",
   "--on-error",
-  "--os",
   "--os-version",
   "--out",
   "--pattern",
   "--pause-ms",
-  "--pick",
   "--pixel-density",
   "--pixels",
   "--plan-digest",
@@ -105,7 +101,6 @@ const VALUE_FLAGS: ReadonlyArray<string> = [
   "--provider-geo-location",
   "--provider-language",
   "--provider-locale",
-  "--provider-network-hosts",
   "--provider-network-profile",
   "--provider-os-version",
   "--provider-project",
@@ -117,15 +112,15 @@ const VALUE_FLAGS: ReadonlyArray<string> = [
   "--quality",
   "--record-as",
   "--remote-config",
-  "--report-junit",
   "--reporter",
+  "--report-junit",
   "--retention-ms",
   "--retries",
   "--run-id",
   "--runtime-file",
+  "-s",
   "--scale",
   "--scope",
-  "--screen-mask",
   "--search-path",
   "--serial",
   "--session",
@@ -151,14 +146,10 @@ const VALUE_FLAGS: ReadonlyArray<string> = [
   "--udid",
   "--until",
   "--wait",
-  "-b",
-  "-d",
-  "-e",
-  "-s",
 ];
 
 // Help gets no bound flags (agent-device reads --config even for help); only args before `--` are flags.
-// agent-device refuses some bound flags per command; connect/disconnect/auth/daemon would
+// agent-device 0.21.31 refuses some bound flags per command; connect/disconnect/auth/daemon would
 // replace T3's connection; device status reads this machine's claims. It reports a sandboxed shell and a
 // dropped tunnel alike, so check first, at --daemon-base-url if given, as agent-device prefers it.
 const launcherSource = (node: string, entryPath: string, boundArgs: ReadonlyArray<string>) =>

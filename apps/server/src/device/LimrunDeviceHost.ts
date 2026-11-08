@@ -135,12 +135,6 @@ export const make = Effect.fn("LimrunDeviceHost.make")(function* (
     AGENT_DEVICE_DAEMON_SERVER_MODE: "http",
     AGENT_DEVICE_DAEMON_IDLE_TIMEOUT_MS: "0",
     AGENT_DEVICE_NO_UPDATE_NOTIFIER: "1",
-    ...(config.iosRunnerApp || environment.AGENT_DEVICE_LIMRUN_IOS_RUNNER_APP
-      ? {
-          AGENT_DEVICE_LIMRUN_IOS_RUNNER_APP:
-            config.iosRunnerApp || environment.AGENT_DEVICE_LIMRUN_IOS_RUNNER_APP,
-        }
-      : {}),
     ...(item.platform === "ios"
       ? {
           LIM_IOS_INSTANCE_URL: item.instance.status.apiUrl!,

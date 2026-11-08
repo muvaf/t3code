@@ -117,84 +117,37 @@ const installTool = Effect.fn("DeviceToolchain.installTool")(function* (
     .pipe(Effect.mapError(fail("preparing the install directory")));
 
   return yield* Effect.gen(function* () {
-    // Unpublished main needs its workspace build; the commit in the version is immutable.
-    if (spec.name === AGENT_DEVICE_PACKAGE && spec.version.includes("-main.")) {
-      // Node refuses to strip TypeScript inside node_modules while building the source checkout.
-      const source = path.join(stagingDir, "source");
-      yield* fs
-        .makeDirectory(path.dirname(source), { recursive: true })
-        .pipe(Effect.mapError(fail("preparing source")));
-      const steps = [
-        {
-          command: "git",
-          args: [
-            "clone",
-            "--filter=blob:none",
-            "--no-checkout",
-            "https://github.com/callstack/agent-device.git",
-            source,
-          ],
-        },
-        {
-          command: "git",
-          args: ["checkout", "--detach", spec.version.split("-main.")[1]!],
-          cwd: source,
-        },
-        { command: "pnpm", args: ["install", "--frozen-lockfile"], cwd: source },
-        { command: "pnpm", args: ["build"], cwd: source },
-        { command: "pnpm", args: ["prepare:publish-assets"], cwd: source },
-      ];
-      for (const step of steps) {
-        const result = yield* runner
-          .run({ ...step, timeout: INSTALL_TIMEOUT })
-          .pipe(Effect.mapError(fail("building pinned agent-device main")));
-        if (result.code !== 0)
-          return yield* new DeviceToolchainInstallError({
-            tool: spec.name,
-            step: "building pinned agent-device main",
-            exitCode: Number(result.code),
-            cause: result,
-          });
-      }
-      yield* fs
-        .makeDirectory(path.join(stagingDir, "node_modules"), { recursive: true })
-        .pipe(Effect.mapError(fail("preparing built package")));
-      yield* fs
-        .rename(source, path.join(stagingDir, "node_modules", spec.name))
-        .pipe(Effect.mapError(fail("staging built package")));
-    } else {
-      const installArgs = [
-        "install",
-        "--prefix",
-        stagingDir,
-        "--no-fund",
-        "--no-audit",
-        `${spec.name}@${spec.version}`,
-      ];
-      const result = yield* runner
-        .run({ command: "npm", args: installArgs, timeout: INSTALL_TIMEOUT })
-        .pipe(
-          Effect.catchTags({
-            ProcessSpawnError: (error) =>
-              error.cause instanceof PlatformError.PlatformError &&
-              error.cause.reason._tag === "NotFound"
-                ? runner.run({
-                    command: "pnpm",
-                    args: ["--package=npm@11", "dlx", "npm", ...installArgs],
-                    timeout: INSTALL_TIMEOUT,
-                  })
-                : Effect.fail(error),
-          }),
-          Effect.mapError(fail("running npm install")),
-        );
-      if (result.code !== 0) {
-        return yield* new DeviceToolchainInstallError({
-          tool: spec.name,
-          step: "running npm install",
-          exitCode: Number(result.code),
-          cause: result,
-        });
-      }
+    const installArgs = [
+      "install",
+      "--prefix",
+      stagingDir,
+      "--no-fund",
+      "--no-audit",
+      `${spec.name}@${spec.version}`,
+    ];
+    const result = yield* runner
+      .run({ command: "npm", args: installArgs, timeout: INSTALL_TIMEOUT })
+      .pipe(
+        Effect.catchTags({
+          ProcessSpawnError: (error) =>
+            error.cause instanceof PlatformError.PlatformError &&
+            error.cause.reason._tag === "NotFound"
+              ? runner.run({
+                  command: "pnpm",
+                  args: ["--package=npm@11", "dlx", "npm", ...installArgs],
+                  timeout: INSTALL_TIMEOUT,
+                })
+              : Effect.fail(error),
+        }),
+        Effect.mapError(fail("running npm install")),
+      );
+    if (result.code !== 0) {
+      return yield* new DeviceToolchainInstallError({
+        tool: spec.name,
+        step: "running npm install",
+        exitCode: Number(result.code),
+        cause: result,
+      });
     }
     const stagedEntry = path.join(stagingDir, "node_modules", spec.name, ...spec.entry);
     if (!(yield* fs.exists(stagedEntry).pipe(Effect.orElseSucceed(() => false)))) {

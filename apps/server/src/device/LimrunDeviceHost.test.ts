@@ -23,7 +23,6 @@ const config: LimrunDeviceHostConfig = {
   maxConcurrentSessions: 1,
   maxSessionMinutes: 10,
   idleMinutes: 2,
-  iosRunnerApp: "/runner.app",
 };
 const layer = ServerConfig.layerTest(process.cwd(), { prefix: "t3-limrun-host-" }).pipe(
   Layer.provideMerge(NodeServices.layer),

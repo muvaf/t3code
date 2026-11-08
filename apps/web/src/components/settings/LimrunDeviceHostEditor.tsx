@@ -36,7 +36,6 @@ export function LimrunDeviceHostEditor(props: {
     ...draft,
     label: draft.label.trim(),
     region: draft.region.trim(),
-    iosRunnerApp: draft.iosRunnerApp.trim(),
     apiKey: key ?? props.host.apiKey,
   };
   const valid = validKey && Option.isSome(decode(next));
@@ -116,20 +115,6 @@ export function LimrunDeviceHostEditor(props: {
               />
             </label>
           ))}
-          <label className="block space-y-1 text-sm">
-            iOS automation runner
-            <Input
-              value={draft.iosRunnerApp}
-              placeholder="/path/to/AgentDeviceRunner-Runner.app"
-              onChange={(e) => setDraft({ ...draft, iosRunnerApp: e.target.value })}
-              disabled={props.busy}
-            />
-          </label>
-          <p className="text-xs text-muted-foreground">
-            The agent-device main build needs its matching iOS runner, built with Xcode 26 and
-            packaged with its iOS runner script. Set the path on the T3 server to enable iOS agent
-            automation. Preview and manual controls work without it.
-          </p>
         </DialogPanel>
         <DialogFooter>
           <Button variant="outline" onClick={props.onClose} disabled={props.busy}>

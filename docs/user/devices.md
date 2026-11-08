@@ -152,21 +152,6 @@ periodic screenshots without a control connection. Limrun video uses WebRTC;
 the browser needs network access to the media candidates supplied by Limrun,
 in addition to its connection to the T3 server.
 
-This fork pins agent-device to a commit from `main`. For agent automation, the
-T3 server needs Git, pnpm, Java 17 or newer, and Android SDK platform 36 to build
-the matching Android helpers on first use. This source-build requirement also
-applies to local and SSH agent-device installations in this fork. Manual Limrun
-preview and input do not require that build.
-
-For iOS agent automation, provide the **iOS automation runner** path in the
-Limrun source settings, or set `AGENT_DEVICE_LIMRUN_IOS_RUNNER_APP` on the server.
-Build the runner from the pinned agent-device commit with Xcode 26, then run its
-[`package-ios-simulator-runner.sh`](https://github.com/callstack/agent-device/blob/463fd7b4d8168aadffc1b1613df96a342a47953e/scripts/package-ios-simulator-runner.sh)
-script and extract the resulting archive. Point T3 at the extracted `.app`.
-The packaging step includes Swift Testing dependencies; using the raw Xcode
-build product can leave the runner unable to start. You can build and package
-it in a Limrun Xcode sandbox and download the bundle to the T3 server.
-
 T3 supplies devices and automation. Use the Limrun Xcode, Gradle, or Expo
 skills to build your app, install it onto the instance ID returned by
 `device_open`, and connect development servers. Source syncing is handled by

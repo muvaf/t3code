@@ -115,8 +115,6 @@ export const LimrunDeviceHostConfig = Schema.Struct({
   idleMinutes: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 60 })).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed(10)),
   ),
-  /** Unpublished agent-device builds need a matching packaged iOS XCTest runner. */
-  iosRunnerApp: TrimmedString.pipe(Schema.withDecodingDefaultKey(Effect.succeed(""))),
 });
 export type LimrunDeviceHostConfig = typeof LimrunDeviceHostConfig.Type;
 

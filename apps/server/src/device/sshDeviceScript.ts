@@ -119,28 +119,7 @@ async function install(name, version, entry) {
   try {
     if (complete()) return file;
     staging = fs.mkdtempSync(path.join(path.dirname(dir), '.install-'));
-    let result;
-    if (name === 'agent-device' && version.includes('-main.')) {
-      const source = path.join(staging, 'source');
-      fs.mkdirSync(path.dirname(source), { recursive: true });
-      const steps = [
-        ['git', ['clone', '--filter=blob:none', '--no-checkout', 'https://github.com/callstack/agent-device.git', source]],
-        ['git', ['checkout', '--detach', version.split('-main.')[1]], source],
-        ['pnpm', ['install', '--frozen-lockfile'], source],
-        ['pnpm', ['build'], source],
-        ['pnpm', ['prepare:publish-assets'], source],
-      ];
-      for (const [command, args, cwd] of steps) {
-        result = run(command, args, { cwd, timeout: 600000, maxBuffer: 8 * 1024 * 1024 });
-        if (result.status !== 0) break;
-      }
-      if (result.status === 0) {
-        fs.mkdirSync(path.join(staging, 'node_modules'), { recursive: true });
-        fs.renameSync(source, path.join(staging, 'node_modules', name));
-      }
-    } else {
-      result = run('npm', ['install', '--prefix', staging, '--no-fund', '--no-audit', name + '@' + version], { timeout: 600000, maxBuffer: 8 * 1024 * 1024 });
-    }
+    const result = run('npm', ['install', '--prefix', staging, '--no-fund', '--no-audit', name + '@' + version], { timeout: 600000, maxBuffer: 8 * 1024 * 1024 });
     if (result.status !== 0) throw Error('Installing ' + name + ': ' + (result.error?.message || result.stderr?.slice(-2000)));
     if (!fs.existsSync(path.join(staging, 'node_modules', name, entry))) throw Error('Missing installed entry for ' + name);
     fs.writeFileSync(path.join(staging, '.install-complete'), version);
