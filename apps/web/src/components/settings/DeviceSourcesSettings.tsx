@@ -612,7 +612,6 @@ export function DeviceSourcesSettings(props: {
                   maxConcurrentSessions: 2,
                   maxSessionMinutes: 60,
                   idleMinutes: 10,
-                  iosRunnerApp: "",
                 },
               })
             }

@@ -1675,7 +1675,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
               maxConcurrentSessions: 2,
               maxSessionMinutes: 60,
               idleMinutes: 10,
-              iosRunnerApp: "",
             },
           ],
           simlockDeviceHosts: [
