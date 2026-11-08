@@ -1,3 +1,4 @@
+import * as AgentDeviceDaemon from "./AgentDeviceDaemon.ts";
 import { describe, expect, it } from "@effect/vitest";
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -42,7 +43,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     stateDir: string,
   ) => Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
   avdOutput: ProcessRunner.ProcessRunOutput = processOutput(0),
-  previousDaemon?: typeof LocalDeviceHost.__testing.AgentDeviceDaemonFile.Type,
+  previousDaemon?: typeof AgentDeviceDaemon.AgentDeviceDaemonFile.Type,
   environment?: NodeJS.ProcessEnv,
 ) {
   const fs = yield* FileSystem.FileSystem;
